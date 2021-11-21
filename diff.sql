@@ -15,7 +15,12 @@ begin
 end
 $$;
 
-create procedure pgdiff.migrate(desired text, target text, dry_run bool default true)
+create procedure pgdiff.migrate(
+    desired text,
+    target text,
+    dry_run bool default true,
+    keep_extra bool default false
+)
 language plpgsql as $$
 declare
     missing_table record;
@@ -25,7 +30,6 @@ declare
     different_column record;
     missing_index record;
     different_index record;
-    -- alteration record;
 begin
     for missing_table in
         select table_name from information_schema.tables
@@ -36,6 +40,18 @@ begin
     loop
         perform pgdiff.ddl(format('create table %I.%I ()', target, missing_table.table_name), dry_run);
     end loop;
+
+    if not keep_extra then
+        for missing_table in
+            select table_name from information_schema.tables
+            where (table_schema, table_type) = (target, 'BASE TABLE')
+            except
+            select table_name from information_schema.tables
+            where (table_schema, table_type) = (desired, 'BASE TABLE')
+        loop
+            perform pgdiff.ddl(format('drop table %I.%I', target, missing_table.table_name), dry_run);
+        end loop;
+    end if;
 
     for missing_column in
         with missing as (
@@ -70,40 +86,24 @@ begin
         ), dry_run);
     end loop;
 
-    for extra_column in
-        select table_name, column_name
-        from information_schema.columns
-        where table_schema = target
-        except
-        select table_name, column_name
-        from information_schema.columns
-        where table_schema = desired
-    loop
-        perform pgdiff.ddl(format(
-            'alter table %I.%I drop column %I',
-            target,
-            extra_column.table_name,
-            extra_column.column_name
-        ), dry_run);
-    end loop;
-
-    -- for missing_table in
-    --     select table_schema, table_name from information_schema.tables
-    --     where (table_schema, table_type) = ($1, 'BASE TABLE')
-    --     except
-    --     select table_schema, table_name from information_schema.tables
-    --     where (table_schema, table_type) = ($2, 'BASE TABLE')
-    -- loop
-    --     for alteration in
-    --         select replace(
-    --             ddlx_alter(format('%I.%I', $1, missing_table.table_name)::regclass::oid),
-    --             $1 || '.',
-    --             $2 || '.'
-    --         )
-    --     loop
-    --         raise notice '%', alteration;
-    --     end loop;
-    -- end loop;
+    if not keep_extra then
+        for extra_column in
+            select table_name, column_name
+            from information_schema.columns
+            where table_schema = target
+            except
+            select table_name, column_name
+            from information_schema.columns
+            where table_schema = desired
+        loop
+            perform pgdiff.ddl(format(
+                'alter table %I.%I drop column %I',
+                target,
+                extra_column.table_name,
+                extra_column.column_name
+            ), dry_run);
+        end loop;
+    end if;
 
     for different_column in
         select table_name, column_name, is_nullable, data_type, column_default
