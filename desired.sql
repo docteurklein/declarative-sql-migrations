@@ -8,8 +8,3 @@ create table test1 (
     name text not null default 1
 );
 
-create table test2 (
-    test2_id int not null primary key,
-    name text not null,
-    test1_id int not null references test1 (test1_id)
-);

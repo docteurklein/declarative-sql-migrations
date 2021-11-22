@@ -35,7 +35,11 @@ create type alteration as (
     details jsonb
 );
 
-create function ddl(alteration alteration) returns text
+create function ddl(
+    alteration alteration,
+    cascade bool default false,
+    if_exists bool default false
+) returns text
 language sql immutable parallel safe as $$
     select case alteration.type
         when 'create schema'
@@ -109,15 +113,18 @@ language sql immutable parallel safe as $$
         -- when 'drop index'
         when 'drop column'
             then format(
-                'alter table %I.%I drop column %I',
+                'alter table %I.%I drop column%s %I',
                 alteration.details->>'schema_name',
                 alteration.details->>'table_name',
+                case if_exists when true then ' if exists' else '' end,
                 alteration.details->>'column_name'
             )
         when 'drop table'
-            then format('drop table %I.%I',
+            then format('drop table%s %I.%I %s',
+                case if_exists when true then ' if exists' else '' end,
                 alteration.details->>'schema_name',
-                alteration.details->>'table_name'
+                alteration.details->>'table_name',
+                case cascade when true then 'cascade' else '' end
             )
         -- when 'drop function'
         -- when 'drop procedure'
@@ -220,13 +227,28 @@ begin
     end loop;
 
     for extra_column in
-        select table_name, column_name
-        from information_schema.columns
-        where table_schema = target
-        except
-        select table_name, column_name
-        from information_schema.columns
-        where table_schema = desired
+        with extra_table as (
+            select table_name from information_schema.tables
+            where (table_schema, table_type) = (target, 'BASE TABLE')
+            except
+            select table_name from information_schema.tables
+            where (table_schema, table_type) = (desired, 'BASE TABLE')
+        ),
+        extra_col as (
+            select table_name, column_name
+            from information_schema.columns
+            where table_schema = target
+            except
+            select table_name, column_name
+            from information_schema.columns
+            where table_schema = desired
+        )
+        select * from extra_col
+        where not exists (
+            select from extra_table
+            where table_name = table_name
+        )
+
     loop
         return next row(
             'drop column',
@@ -324,7 +346,8 @@ create procedure migrate(
     target text,
     dry_run bool default true,
     keep_extra bool default false,
-    cascade bool default false
+    cascade bool default false,
+    if_exists bool default false
 )
 language plpgsql as $$
 declare
@@ -337,7 +360,7 @@ begin
             else true
             end
     loop
-        perform exec(alteration.ddl, dry_run);
+        perform exec(ddl(alteration, cascade, if_exists), dry_run);
     end loop;
 end;
 $$;
