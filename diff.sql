@@ -7,12 +7,12 @@ set search_path to pgdiff;
 
 create type ddl_type as enum (
     'create schema',
-    'create type',
-    'alter type',
-    'create function',
-    'create procedure',
-    'alter function',
-    'alter procedure',
+    -- 'create type',
+    -- 'alter type',
+    -- 'create function',
+    -- 'create procedure',
+    -- 'alter function',
+    -- 'alter procedure',
     'create table',
     'add column',
     'alter column set default',
@@ -20,14 +20,19 @@ create type ddl_type as enum (
     'alter column drop not null',
     'alter column set not null',
     'alter column type',
-    'create index',
-    'alter index',
-    'drop index',
-    'drop column',
+    -- 'add primary key',
+    -- 'add foreign key',
+    -- 'drop primary key',
+    -- 'drop foreign key',
+    -- 'create index',
+    -- 'create view',
+    -- 'drop index',
+    -- 'drop view',
     'drop table',
-    'drop function',
-    'drop procedure',
-    'drop type'
+    'drop column'
+    -- 'drop function',
+    -- 'drop procedure',
+    -- 'drop type'
 );
 
 create type alteration as (
@@ -37,10 +42,10 @@ create type alteration as (
 
 create function ddl(
     alteration alteration,
-    cascade bool default false,
-    if_exists bool default false
+    cascade bool default false
 ) returns text
-language sql immutable parallel safe as $$
+language sql strict immutable parallel safe as $$
+    -- select row_to_json(alteration);
     select case alteration.type
         when 'create schema'
             then format('create schema %I', alteration.details->>'schema_name')
@@ -109,19 +114,16 @@ language sql immutable parallel safe as $$
                 alteration.details->>'data_type'
             )
         -- when 'create index'
-        -- when 'alter index'
         -- when 'drop index'
         when 'drop column'
             then format(
-                'alter table %I.%I drop column%s %I',
+                'alter table %I.%I drop column %I',
                 alteration.details->>'schema_name',
                 alteration.details->>'table_name',
-                case if_exists when true then ' if exists' else '' end,
                 alteration.details->>'column_name'
             )
         when 'drop table'
-            then format('drop table%s %I.%I %s',
-                case if_exists when true then ' if exists' else '' end,
+            then format('drop table %I.%I %s',
                 alteration.details->>'schema_name',
                 alteration.details->>'table_name',
                 case cascade when true then 'cascade' else '' end
@@ -130,213 +132,186 @@ language sql immutable parallel safe as $$
         -- when 'drop procedure'
         -- when 'drop type'
         else ''
-    end from (select alteration) _(alteration);
-$$;
-
-create function exec(inout ddl text, dry_run bool default true) returns text
-language plpgsql as $$
-begin
-    raise notice '%', ddl;
-    if not dry_run then
-        execute ddl;
-    end if;
-end
+    end;
 $$;
 
 create function alterations(desired text, target text) returns setof alteration
 language plpgsql as $$
 declare
-    missing_table record;
-    extra_table record;
-    missing_column record;
-    extra_column record;
-    different_column record;
-    missing_index record;
-    different_index record;
+    alteration record;
 begin
-    if not exists(
-        select schema_name from information_schema.schemata
-        where schema_name = target
-    ) then
-        return next row(
-            'create schema',
-            jsonb_build_object(
+    for alteration in
+        with schema_to_create as (
+            select 'create schema', jsonb_build_object(
                 'schema_name', target
-            )
-        )::alteration;
-    end if;
-    for missing_table in
-        select table_name from information_schema.tables
-        where (table_schema, table_type) = (desired, 'BASE TABLE')
-        except
-        select table_name from information_schema.tables
-        where (table_schema, table_type) = (target, 'BASE TABLE')
-    loop
-        return next row(
-            'create table',
-            jsonb_build_object(
-                'schema_name', target,
-                'table_name', missing_table.table_name
-            )
-        )::alteration;
-    end loop;
-
-    for extra_table in
-        select table_name from information_schema.tables
-        where (table_schema, table_type) = (target, 'BASE TABLE')
-        except
-        select table_name from information_schema.tables
-        where (table_schema, table_type) = (desired, 'BASE TABLE')
-    loop
-        return next row(
-            'drop table',
-            jsonb_build_object(
-                'schema_name', target,
-                'table_name', extra_table.table_name
-            )
-        )::alteration;
-    end loop;
-
-    for missing_column in
-        with missing as (
-            select table_name, column_name
-            from information_schema.columns
-            where table_schema = desired
+            ) from pg_namespace
+            where nspname = desired
             except
-            select table_name, column_name
-            from information_schema.columns
-            where table_schema = target
-        )
-        select table_name, column_name, is_nullable, data_type, ordinal_position, column_default
-        from information_schema.columns
-        join missing using (table_name, column_name)
-        where table_schema = desired
-        order by table_name, ordinal_position asc
-    loop
-        return next row(
-            'add column',
-            jsonb_build_object(
-                'schema_name', target,
-                'table_name', missing_column.table_name,
-                'column_name', missing_column.column_name,
-                'is_nullable', missing_column.is_nullable,
-                'column_default', missing_column.column_default,
-                'data_type', missing_column.data_type
-            )
-        )::alteration;
-    end loop;
-
-    for extra_column in
-        with extra_table as (
-            select table_name from information_schema.tables
-            where (table_schema, table_type) = (target, 'BASE TABLE')
-            except
-            select table_name from information_schema.tables
-            where (table_schema, table_type) = (desired, 'BASE TABLE')
+            select 'create schema', jsonb_build_object(
+                'schema_name', target
+            ) from pg_namespace
+            where nspname = target
         ),
-        extra_col as (
-            select table_name, column_name
-            from information_schema.columns
-            where table_schema = target
-            except
-            select table_name, column_name
-            from information_schema.columns
-            where table_schema = desired
-        )
-        select * from extra_col
-        where not exists (
-            select from extra_table
-            where table_name = table_name
-        )
-
-    loop
-        return next row(
-            'drop column',
-            jsonb_build_object(
+        table_to_create as (
+            select 'create table', jsonb_build_object(
                 'schema_name', target,
-                'table_name', extra_column.table_name,
-                'column_name', extra_column.column_name
-            )
-        )::alteration;
-    end loop;
-
-    for different_column in
-        with missing as (
-            select table_name, column_name
-            from information_schema.columns
-            where table_schema = desired
+                'table_name', tablename
+            ) from pg_tables
+            where schemaname = desired
             except
-            select table_name, column_name
-            from information_schema.columns
-            where table_schema = target
+            select 'create table', jsonb_build_object(
+                'schema_name', target,
+                'table_name', tablename
+            ) from pg_tables
+            where schemaname = target
         ),
-        different as (
-            select table_name, column_name, is_nullable, data_type, column_default
-            from information_schema.columns
-            where table_schema = desired
+        table_to_drop as (
+            select 'drop table', jsonb_build_object(
+                'schema_name', target,
+                'table_name', tablename
+            ) from pg_tables
+            where schemaname = target
             except
-            select table_name, column_name, is_nullable, data_type, column_default
-            from information_schema.columns
-            where table_schema = target
-        )
-        select table_name, column_name, is_nullable, data_type, column_default
-        from different
-        where not exists (
-            select from missing
-            where table_name = table_name
-            and column_name = column_name
-        )
-    loop
-        if different_column.column_default is not null then
-            return next row(
-                'alter column set default',
-                jsonb_build_object(
-                    'schema_name', target,
-                    'table_name', different_column.table_name,
-                    'column_name', different_column.column_name,
-                    'column_default', different_column.column_default
-                )
-            )::alteration;
-        else
-            return next row(
-                'alter column drop default',
-                jsonb_build_object(
-                    'schema_name', target,
-                    'table_name', different_column.table_name,
-                    'column_name', different_column.column_name,
-                    'column_default', different_column.column_default
-                )
-            )::alteration;
-        end if;
-
-        if different_column.is_nullable then
-            return next row(
-                'alter column drop not null',
-                jsonb_build_object(
-                    'table', different_column.table_name,
-                    'column', different_column.column_name,
-                    'is_nullable', different_column.is_nullable
-                )
-            )::alteration;
-        else
-            return next row(
-                'alter column set not null',
-                jsonb_build_object(
-                    'table', different_column.table_name,
-                    'column', different_column.column_name,
-                    'is_nullable', different_column.is_nullable
-                )
-            )::alteration;
-        end if;
-
-        return next row(
-            'alter column type',
-            jsonb_build_object(
-                'table', different_column.table_name,
-                'column', different_column.column_name,
-                'type', different_column.data_type
+            select 'drop table', jsonb_build_object(
+                'schema_name', target,
+                'table_name', tablename
+            ) from pg_tables
+            where schemaname = desired
+        ),
+        column_to_add as (
+            with missing as (
+                select table_name, column_name -- compare only those two with "except", because "ordinal_position" can be always different
+                from information_schema.columns
+                where table_schema = desired
+                except
+                select table_name, column_name
+                from information_schema.columns
+                where table_schema = target
             )
-        )::alteration;
+            select 'add column', jsonb_build_object(
+                'schema_name', target,
+                'table_name', table_name,
+                'column_name', column_name,
+                'is_nullable', is_nullable,
+                'column_default', column_default,
+                'data_type', data_type
+            )
+            from information_schema.columns
+            join missing using (table_name, column_name)
+            where table_schema = desired
+            order by table_name, ordinal_position asc
+        ),
+        column_to_drop as (
+            with extra_column as (
+                select table_name, column_name
+                from information_schema.columns
+                where table_schema = target
+                except
+                select table_name, column_name
+                from information_schema.columns
+                where table_schema = desired
+            )
+            select 'drop column', jsonb_build_object(
+                'schema_name', target,
+                'table_name', table_name,
+                'column_name', column_name
+            )
+            from extra_column
+            where not exists (
+                select from table_to_drop
+                where table_name = table_name
+            )
+        ),
+        column_to_alter as (
+            with different_column as (
+                select table_name, column_name, is_nullable, data_type, column_default
+                from information_schema.columns
+                where table_schema = desired
+                except
+                select table_name, column_name, is_nullable, data_type, column_default
+                from information_schema.columns
+                where table_schema = target
+            )
+            select desired.*,
+                desired.is_nullable != t.is_nullable as nullable_changed,
+                desired.column_default != t.column_default as default_changed,
+                desired.data_type != t.data_type as type_changed
+            from different_column desired
+            join information_schema.columns t using(table_name, column_name)
+            where t.table_schema = target
+            and not exists (
+                select from column_to_add
+                where table_name = desired.table_name
+                and column_name = desired.column_name
+            )
+        ),
+        column_set_default as (
+            select 'alter column set default', jsonb_build_object(
+                'schema_name', target,
+                'table_name', table_name,
+                'column_name', column_name,
+                'column_default', column_default
+            )
+            from column_to_alter
+            where default_changed
+            and column_default is not null
+        ),
+        column_drop_default as (
+            select 'alter column drop default', jsonb_build_object(
+                'schema_name', target,
+                'table_name', table_name,
+                'column_name', column_name,
+                'column_default', column_default
+            )
+            from column_to_alter
+            where default_changed
+            and column_default is null
+        ),
+        column_drop_not_null as (
+            select 'alter column drop not null', jsonb_build_object(
+                'schema_name', target,
+                'table_name', table_name,
+                'column_name', column_name,
+                'is_nullable', is_nullable
+            )
+            from column_to_alter
+            where nullable_changed
+            and is_nullable::bool
+        ),
+        column_set_not_null as (
+            select 'alter column set not null', jsonb_build_object(
+                'schema_name', target,
+                'table_name', table_name,
+                'column_name', column_name,
+                'is_nullable', is_nullable
+            )
+            from column_to_alter
+            where nullable_changed
+            and not is_nullable::bool
+        ),
+        column_type as (
+            select 'alter column type', jsonb_build_object(
+                'schema_name', target,
+                'table_name', table_name,
+                'column_name', column_name,
+                'data_type', data_type
+            )
+            from column_to_alter
+            where type_changed
+        )
+        select 1, a::alteration from (table schema_to_create)      a union
+        select 2, a::alteration from (table table_to_create)       a union
+        select 3, a::alteration from (table table_to_drop)         a union
+        select 4, a::alteration from (table column_to_add)         a union
+        select 5, a::alteration from (table column_to_drop)        a union
+        select 6, a::alteration from (table column_set_default)    a union
+        select 7, a::alteration from (table column_drop_default)   a union
+        select 8, a::alteration from (table column_drop_not_null)  a union
+        select 9, a::alteration from (table column_set_not_null)   a union
+        select 10, a::alteration from (table column_type) a
+        order by 1
+    loop
+        return next alteration.a;
     end loop;
 end;
 $$;
@@ -346,21 +321,24 @@ create procedure migrate(
     target text,
     dry_run bool default true,
     keep_extra bool default false,
-    cascade bool default false,
-    if_exists bool default false
+    cascade bool default false
 )
 language plpgsql as $$
 declare
-    alteration alteration;
+    alteration text;
 begin
     for alteration in
-        select * from alterations(desired, target)
+        select ddl(a, cascade) from alterations(desired, target) a
         where case when keep_extra is true
             then type not in ('drop table', 'drop column')
             else true
             end
     loop
-        perform exec(ddl(alteration, cascade, if_exists), dry_run);
+        raise notice '%', alteration;
+        if dry_run is false
+            then execute alteration;
+            else null;
+        end if;
     end loop;
 end;
 $$;
