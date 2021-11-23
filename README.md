@@ -4,11 +4,52 @@
 
 A postgres migration tool based on diffing 2 schemata.
 
+### API
+
+```sql
+-- a type representing an alteration
+type alteration as (
+    "order" int, -- smaller number means higher priority
+    type ddl_type,
+    details jsonb
+);
+
+-- render an alteration as SQL DDL statement
+function ddl(
+    alteration alteration,
+    cascade bool default false -- include "CASCADE" in emitted statements that support it
+) returns text 
+strict immutable parallel safe;
+
+-- execute any statement
+function exec(inout ddl text) strict parallel safe;
+
+-- returns the set of all alterations to make "target" similar to "desired"
+function alterations(
+    desired text, -- the reference schema
+    target text -- the schema to alter
+) returns setof alteration
+strict parallel safe;
+
+-- prints and optionnaly executes all alterations
+procedure migrate(
+    desired text, -- the reference schema
+    target text -- the schema to alter
+    dry_run bool default true, -- only print
+    keep_data bool default false, -- do not emit "DROP" statements that remove data
+    cascade bool default false -- include "CASCADE" in emitted statements that support it
+);
+```
+
 ## how?
 
 ```shell
-psql -a -f diff.sql -f example.sql
+psql -q -f desired.sql -f diff.sql -c "call migrate('desired', 'target',
+    dry_run => true
+)"
 ```
+
+## example 
 
 ```sql
 set search_path to pgdiff;
@@ -34,8 +75,7 @@ select ddl(a), * from alterations('desired', 'target') a;
 
 
 call pgdiff.migrate('desired', 'target',
-    dry_run => false,
-    keep_extra => false
+    dry_run => false
 );
 
 alter table desired.test1 add column test text not null default 'ah' check (length(test) > 0);
@@ -46,8 +86,7 @@ select ddl(a), * from alterations('desired', 'target') a;
 -- alter table target.test1 add constraint test1_test_check CHECK ((length(test) > 0)) │     5 │ alter table add constraint │ {"ddl": "CHECK ((length(test) > 0))", "table_name": "test1", "schema_name": "target", "constraint_name": "test1_test_check"}
 
 call pgdiff.migrate('desired', 'target',
-    dry_run => false,
-    keep_extra => false
+    dry_run => false
 );
 
 select ddl(a), * from alterations('desired', 'target') a;

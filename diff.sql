@@ -11,8 +11,10 @@ create type ddl_type as enum (
     -- 'alter type',
     -- 'create function',
     -- 'create procedure',
+    -- 'create trigger',
     -- 'alter function',
     -- 'alter procedure',
+    -- 'alter trigger',
     'create table',
     'add column',
     'alter table add constraint',
@@ -35,6 +37,7 @@ create type ddl_type as enum (
     'drop column'
     -- 'drop function',
     -- 'drop procedure',
+    -- 'drop trigger',
     -- 'drop type'
 );
 
@@ -43,6 +46,10 @@ create type alteration as (
     type ddl_type,
     details jsonb
 );
+
+create function exec(inout ddl text)
+language plpgsql strict parallel safe
+as 'begin execute ddl; end;';
 
 create function ddl(
     alteration alteration,
@@ -191,7 +198,7 @@ $$;
 
 
 create function alterations(desired text, target text) returns setof alteration
-language plpgsql as $$
+language plpgsql strict parallel safe as $$
 declare
     alteration alteration;
 begin
