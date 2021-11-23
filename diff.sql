@@ -57,6 +57,10 @@ language sql strict immutable parallel safe as $$
         -- when 'create procedure'
         -- when 'alter function'
         -- when 'alter procedure'
+        when 'create schema'
+            then format('create schema %I',
+                alteration.details->>'schema_name'
+            )
         when 'create table'
             then format('create table %I.%I ()',
                 alteration.details->>'schema_name',
@@ -176,7 +180,15 @@ declare
     alteration alteration;
 begin
     for alteration in
-        with table_to_create as (
+        with schema_to_create as (
+            select 0, 'create schema', jsonb_build_object(
+                'schema_name', target
+            ) from pg_namespace
+            where not exists (
+                select from pg_namespace where nspname = target
+            )
+        ),
+        table_to_create as (
             select 1, 'create table', jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
@@ -320,7 +332,7 @@ begin
                 select dcl.relname as table_name, dc.conname as constraint_name, dc.oid, dc.contype
                 from pg_constraint dc
                 join pg_class dcl on dcl.oid = dc.conrelid
-                left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = target::regnamespace::oid
+                left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = to_regnamespace(target)::oid
                 where tc.oid is null
                 and dc.contype in ('f', 'p', 'c', 'u')
                 and dc.connamespace = desired::regnamespace 
@@ -341,7 +353,7 @@ begin
                 select dcl.relname as table_name, dc.conname as constraint_name, dc.condeferrable, dc.condeferred
                 from pg_constraint dc
                 join pg_class dcl on dcl.oid = dc.conrelid
-                left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = target::regnamespace::oid
+                left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = to_regnamespace(target)::oid
                 where (
                     tc.condeferred != dc.condeferred
                     or tc.condeferrable != dc.condeferrable
@@ -365,7 +377,7 @@ begin
                 left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = desired::regnamespace::oid
                 where tc.oid is null
                 and dc.contype in ('f', 'p', 'c', 'u')
-                and dc.connamespace = target::regnamespace 
+                and dc.connamespace = to_regnamespace(target)
             )
             select 4, 'alter table drop constraint', jsonb_build_object(
                 'schema_name', target,
@@ -378,7 +390,7 @@ begin
                 select dc.relname, di.indrelid::regclass, di.indexrelid
                 from pg_index di
                 join pg_class dc on di.indexrelid = dc.oid and dc.relnamespace = desired::regnamespace::oid
-                left join pg_class tc on tc.relname = dc.relname and tc.relnamespace = target::regnamespace::oid
+                left join pg_class tc on tc.relname = dc.relname and tc.relnamespace = to_regnamespace(target)::oid
                 where tc.oid is null
                 and not di.indisprimary
                 and not di.indisunique
@@ -394,7 +406,7 @@ begin
             with extra as (
                 select tc.relname, ti.indrelid::regclass
                 from pg_index ti
-                join pg_class tc on ti.indexrelid = tc.oid and tc.relnamespace = target::regnamespace::oid
+                join pg_class tc on ti.indexrelid = tc.oid and tc.relnamespace = to_regnamespace(target)::oid
                 left join pg_class dc on dc.relname = tc.relname and dc.relnamespace = desired::regnamespace::oid
                 where dc.oid is null
                 and not ti.indisprimary
@@ -407,6 +419,7 @@ begin
             )
             from extra
         )
+        table schema_to_create union
         table table_to_create union
         table table_to_drop union
         table column_to_add union

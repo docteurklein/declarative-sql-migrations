@@ -12,8 +12,6 @@ psql -f desired.sql
 ```
 set search_path to pgdiff;
 
-create schema if not exists target;
-
 select ddl(a), * from pgdiff.alterations('desired', 'target') a;
                    ddl                    │    type     │               details
 ──────────────────────────────────────────┼─────────────┼──────────────────────────────────────
