@@ -16,7 +16,7 @@ create type ddl_type as enum (
     -- 'alter procedure',
     -- 'alter trigger',
     'create table',
-    'add column',
+    'alter table add column',
     'alter table add constraint',
     'alter table alter constraint',
     'alter table drop constraint',
@@ -73,7 +73,7 @@ language sql strict immutable parallel safe as $$
                 alteration.details->>'schema_name',
                 alteration.details->>'table_name'
             )
-        when 'add column'
+        when 'alter table add column'
             then format(
                 'alter table %I.%I add column %I %s %s %s',
                 alteration.details->>'schema_name',
@@ -181,22 +181,6 @@ language sql strict immutable parallel safe as $$
     end;
 $$;
 
--- create function table_to_drop(desired text, target text) returns setof alteration
--- language sql as $$
---     select 1, 'drop table'::ddl_type, jsonb_build_object(
---         'schema_name', target,
---         'table_name', tablename
---     ) from pg_tables
---     where schemaname = target
---     except
---     select 1, 'drop table'::ddl_type, jsonb_build_object(
---         'schema_name', target,
---         'table_name', tablename
---     ) from pg_tables
---     where schemaname = desired
--- $$;
-
-
 create function alterations(desired text, target text) returns setof alteration
 language plpgsql strict parallel safe as $$
 declare
@@ -247,7 +231,7 @@ begin
                 from information_schema.columns
                 where table_schema = target
             )
-            select 2, 'add column', jsonb_build_object(
+            select 2, 'alter table add column', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -296,7 +280,7 @@ begin
                 and column_name = d.column_name
             )
         ),
-        column_set_default as (
+        column_to_set_default as (
             select 3, 'alter column set default', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
@@ -307,7 +291,7 @@ begin
             where default_changed
             and column_default is not null
         ),
-        column_drop_default as (
+        column_to_drop_default as (
             select 3, 'alter column drop default', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
@@ -318,7 +302,7 @@ begin
             where default_changed
             and column_default is null
         ),
-        column_drop_not_null as (
+        column_to_drop_not_null as (
             select 3, 'alter column drop not null', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
@@ -329,7 +313,7 @@ begin
             where nullable_changed
             and is_nullable::bool
         ),
-        column_set_not_null as (
+        column_to_set_not_null as (
             select 3, 'alter column set not null', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
@@ -340,7 +324,7 @@ begin
             where nullable_changed
             and not is_nullable::bool
         ),
-        column_type as (
+        column_to_set_type as (
             select 3, 'alter column type', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
@@ -447,16 +431,16 @@ begin
         table table_to_drop union
         table column_to_add union
         table column_to_drop union
-        table column_set_default union
-        table column_drop_default union
-        table column_drop_not_null union
-        table column_set_not_null union
+        table column_to_set_default union
+        table column_to_drop_default union
+        table column_to_drop_not_null union
+        table column_to_set_not_null union
+        table column_to_set_type union
         table constraint_to_create union
         table constraint_to_alter union
         table constraint_to_drop union
         table index_to_create union
-        table index_to_drop union
-        table column_type
+        table index_to_drop
         order by 1
     loop
         return next alteration;
