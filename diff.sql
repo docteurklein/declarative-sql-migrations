@@ -15,6 +15,9 @@ create type ddl_type as enum (
     -- 'alter procedure',
     'create table',
     'add column',
+    'alter table add constraint',
+    'alter table alter constraint',
+    'alter table drop constraint',
     'alter column set default',
     'alter column drop default',
     'alter column drop not null',
@@ -36,6 +39,7 @@ create type ddl_type as enum (
 );
 
 create type alteration as (
+    "order" int, -- smaller number means higher priority
     type ddl_type,
     details jsonb
 );
@@ -47,8 +51,6 @@ create function ddl(
 language sql strict immutable parallel safe as $$
     -- select row_to_json(alteration);
     select case alteration.type
-        when 'create schema'
-            then format('create schema %I', alteration.details->>'schema_name')
         -- when 'create type'
         -- when 'alter type'
         -- when 'create function'
@@ -113,6 +115,33 @@ language sql strict immutable parallel safe as $$
                 alteration.details->>'column_name',
                 alteration.details->>'data_type'
             )
+        when 'alter table add constraint'
+            then format('alter table %I.%I add constraint %s %s',
+                alteration.details->>'schema_name',
+                alteration.details->>'table_name',
+                alteration.details->>'constraint_name',
+                alteration.details->>'ddl'
+            )
+        when 'alter table alter constraint'
+            then format('alter table %I.%I alter constraint %s %s %s',
+                alteration.details->>'schema_name',
+                alteration.details->>'table_name',
+                alteration.details->>'constraint_name',
+                case (alteration.details->>'deferrable')::bool
+                    when true then 'deferrable'
+                    else 'not deferrable'
+                end,
+                case (alteration.details->>'deferred')::bool
+                    when true then 'initially deferred'
+                    else 'initially immediate'
+                end
+            )
+        when 'alter table drop constraint'
+            then format('alter table %I.%I drop constraint %s',
+                alteration.details->>'schema_name',
+                alteration.details->>'table_name',
+                alteration.details->>'constraint_name'
+            )
         when 'create index'
             then alteration.details->>'ddl'
         when 'drop index'
@@ -144,41 +173,30 @@ $$;
 create function alterations(desired text, target text) returns setof alteration
 language plpgsql as $$
 declare
-    alteration record;
+    alteration alteration;
 begin
     for alteration in
-        with schema_to_create as (
-            select 'create schema', jsonb_build_object(
-                'schema_name', target
-            ) from pg_namespace
-            where nspname = desired
-            except
-            select 'create schema', jsonb_build_object(
-                'schema_name', target
-            ) from pg_namespace
-            where nspname = target
-        ),
-        table_to_create as (
-            select 'create table', jsonb_build_object(
+        with table_to_create as (
+            select 1, 'create table', jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = desired
             except
-            select 'create table', jsonb_build_object(
+            select 1, 'create table', jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = target
         ),
         table_to_drop as (
-            select 'drop table', jsonb_build_object(
+            select 1, 'drop table', jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = target
             except
-            select 'drop table', jsonb_build_object(
+            select 1, 'drop table', jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
@@ -194,7 +212,7 @@ begin
                 from information_schema.columns
                 where table_schema = target
             )
-            select 'add column', jsonb_build_object(
+            select 2, 'add column', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -217,7 +235,7 @@ begin
                 from information_schema.columns
                 where table_schema = desired
             )
-            select 'drop column', jsonb_build_object(
+            select 2, 'drop column', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name
@@ -244,7 +262,7 @@ begin
             )
         ),
         column_set_default as (
-            select 'alter column set default', jsonb_build_object(
+            select 3, 'alter column set default', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -255,7 +273,7 @@ begin
             and column_default is not null
         ),
         column_drop_default as (
-            select 'alter column drop default', jsonb_build_object(
+            select 3, 'alter column drop default', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -266,7 +284,7 @@ begin
             and column_default is null
         ),
         column_drop_not_null as (
-            select 'alter column drop not null', jsonb_build_object(
+            select 3, 'alter column drop not null', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -277,7 +295,7 @@ begin
             and is_nullable::bool
         ),
         column_set_not_null as (
-            select 'alter column set not null', jsonb_build_object(
+            select 3, 'alter column set not null', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -288,7 +306,7 @@ begin
             and not is_nullable::bool
         ),
         column_type as (
-            select 'alter column type', jsonb_build_object(
+            select 3, 'alter column type', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -297,27 +315,64 @@ begin
             from column_to_alter
             where type_changed
         ),
-        -- constraint_to_create as (
-        --     with missing as (
-        --         select indexrelid, indrelid
-        --         from pg_index i
-        --         join pg_class c on i.indexrelid = c.oid
-        --         join pg_namespace n on c.relnamespace = n.oid
-        --         where nspname = desired
-        --         except
-        --         select indexrelid, indrelid
-        --         from pg_index i
-        --         join pg_class c on i.indexrelid = c.oid
-        --         join pg_namespace n on c.relnamespace = n.oid
-        --         where nspname = target
-        --     )
-        --     select 'create index', jsonb_build_object(
-        --         'schema_name', target,
-        --         'index_name', indexrelid::regclass,
-        --         'table_name', indrelid::regclass,
-        --         'ddl',  pg_get_indexdef(indexrelid)
-        --     ) from missing
-        -- ),
+        constraint_to_create as (
+            with missing as (
+                select dcl.relname as table_name, dc.conname as constraint_name, dc.oid, dc.contype
+                from pg_constraint dc
+                join pg_class dcl on dcl.oid = dc.conrelid
+                left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = target::regnamespace::oid
+                where tc.oid is null
+                and dc.contype in ('f', 'p', 'c', 'u')
+                and dc.connamespace = desired::regnamespace 
+            )
+            select 
+                case contype when 'p' then 4 else 5 end, -- primary key first
+                'alter table add constraint',
+                jsonb_build_object(
+                    'schema_name', target,
+                    'constraint_name', constraint_name,
+                    'table_name', table_name,
+                    'ddl', replace(pg_get_constraintdef(oid), desired || '.', target || '.' -- bad
+                )
+            ) from missing
+        ),
+        constraint_to_alter as (
+            with different as (
+                select dcl.relname as table_name, dc.conname as constraint_name, dc.condeferrable, dc.condeferred
+                from pg_constraint dc
+                join pg_class dcl on dcl.oid = dc.conrelid
+                left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = target::regnamespace::oid
+                where (
+                    tc.condeferred != dc.condeferred
+                    or tc.condeferrable != dc.condeferrable
+                )
+                and dc.contype in ('f') -- only fkeys are supported
+                and dc.connamespace = desired::regnamespace 
+            )
+            select 5, 'alter table alter constraint', jsonb_build_object(
+                'schema_name', target,
+                'constraint_name', constraint_name,
+                'table_name', table_name,
+                'deferrable', condeferrable::bool,
+                'deferred', condeferred::bool
+            ) from different
+        ),
+        constraint_to_drop as (
+            with extra as (
+                select dcl.relname as table_name, dc.conname as constraint_name, pg_get_constraintdef(dc.oid) as ddl
+                from pg_constraint dc
+                join pg_class dcl on dcl.oid = dc.conrelid
+                left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = desired::regnamespace::oid
+                where tc.oid is null
+                and dc.contype in ('f', 'p', 'c', 'u')
+                and dc.connamespace = target::regnamespace 
+            )
+            select 4, 'alter table drop constraint', jsonb_build_object(
+                'schema_name', target,
+                'constraint_name', constraint_name,
+                'table_name', table_name
+            ) from extra
+        ),
         index_to_create as (
             with missing as (
                 select dc.relname, di.indrelid::regclass, di.indexrelid
@@ -325,12 +380,14 @@ begin
                 join pg_class dc on di.indexrelid = dc.oid and dc.relnamespace = desired::regnamespace::oid
                 left join pg_class tc on tc.relname = dc.relname and tc.relnamespace = target::regnamespace::oid
                 where tc.oid is null
+                and not di.indisprimary
+                and not di.indisunique
             )
-            select 'create index', jsonb_build_object(
+            select 6, 'create index', jsonb_build_object(
                 'schema_name', target,
                 'index_name', relname,
                 'table_name', indrelid,
-                'ddl',  replace(pg_get_indexdef(indexrelid), desired || '.', target || '.')
+                'ddl',  replace(pg_get_indexdef(indexrelid), desired || '.', target || '.') -- bad
             ) from missing
         ),
         index_to_drop as (
@@ -340,29 +397,33 @@ begin
                 join pg_class tc on ti.indexrelid = tc.oid and tc.relnamespace = target::regnamespace::oid
                 left join pg_class dc on dc.relname = tc.relname and dc.relnamespace = desired::regnamespace::oid
                 where dc.oid is null
+                and not ti.indisprimary
+                and not ti.indisunique
             )
-            select 'drop index', jsonb_build_object(
+            select 6, 'drop index', jsonb_build_object(
                 'schema_name', target,
                 'index_name', relname,
                 'table_name', indrelid
             )
             from extra
         )
-        select 1,  a::alteration from (table schema_to_create)      a union
-        select 2,  a::alteration from (table table_to_create)       a union
-        select 3,  a::alteration from (table table_to_drop)         a union
-        select 4,  a::alteration from (table column_to_add)         a union
-        select 5,  a::alteration from (table column_to_drop)        a union
-        select 6,  a::alteration from (table column_set_default)    a union
-        select 7,  a::alteration from (table column_drop_default)   a union
-        select 8,  a::alteration from (table column_drop_not_null)  a union
-        select 9,  a::alteration from (table column_set_not_null)   a union
-        select 10, a::alteration from (table index_to_create)       a union
-        select 11, a::alteration from (table index_to_drop)         a union
-        select 12, a::alteration from (table column_type) a
+        table table_to_create union
+        table table_to_drop union
+        table column_to_add union
+        table column_to_drop union
+        table column_set_default union
+        table column_drop_default union
+        table column_drop_not_null union
+        table column_set_not_null union
+        table constraint_to_create union
+        table constraint_to_alter union
+        table constraint_to_drop union
+        table index_to_create union
+        table index_to_drop union
+        table column_type
         order by 1
     loop
-        return next alteration.a;
+        return next alteration;
     end loop;
 end;
 $$;
