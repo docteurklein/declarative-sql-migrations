@@ -10,7 +10,9 @@ psql -f diff.sql
 psql -f desired.sql
 
 ```
-select * from pgdiff.alterations('desired', 'target');
+set search_path to pgdiff;
+
+select ddl(a), * from pgdiff.alterations('desired', 'target') a;
                    ddl                    │    type     │               details
 ──────────────────────────────────────────┼─────────────┼──────────────────────────────────────
  alter table test2.test1 drop column name │ drop column │ {"table": "test1", "column": "name"}

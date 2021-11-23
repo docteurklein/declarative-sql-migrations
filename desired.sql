@@ -7,8 +7,9 @@ set local search_path to desired;
 
 create table test1 (
     test1_id int not null primary key,
-    name text null default 1
+    name text not null default 1
 );
+create index test1_name on test1 (name);
 
 create table test2 (
     test2_id int not null primary key,

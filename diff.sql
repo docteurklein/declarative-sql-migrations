@@ -24,9 +24,9 @@ create type ddl_type as enum (
     -- 'add foreign key',
     -- 'drop primary key',
     -- 'drop foreign key',
-    -- 'create index',
+    'create index',
     -- 'create view',
-    -- 'drop index',
+    'drop index',
     -- 'drop view',
     'drop table',
     'drop column'
@@ -113,8 +113,14 @@ language sql strict immutable parallel safe as $$
                 alteration.details->>'column_name',
                 alteration.details->>'data_type'
             )
-        -- when 'create index'
-        -- when 'drop index'
+        when 'create index'
+            then alteration.details->>'ddl'
+        when 'drop index'
+            then format(
+                'drop index %I.%I',
+                alteration.details->>'schema_name',
+                alteration.details->>'index_name'
+            )
         when 'drop column'
             then format(
                 'alter table %I.%I drop column %I',
@@ -223,26 +229,18 @@ begin
             )
         ),
         column_to_alter as (
-            with different_column as (
-                select table_name, column_name, is_nullable, data_type, column_default
-                from information_schema.columns
-                where table_schema = desired
-                except
-                select table_name, column_name, is_nullable, data_type, column_default
-                from information_schema.columns
-                where table_schema = target
-            )
-            select desired.*,
-                desired.is_nullable != t.is_nullable as nullable_changed,
-                desired.column_default != t.column_default as default_changed,
-                desired.data_type != t.data_type as type_changed
-            from different_column desired
+            select d.*,
+                d.is_nullable != t.is_nullable as nullable_changed,
+                d.column_default != t.column_default as default_changed,
+                d.data_type != t.data_type as type_changed
+            from information_schema.columns d
             join information_schema.columns t using(table_name, column_name)
             where t.table_schema = target
+            and d.table_schema = desired
             and not exists (
                 select from column_to_add
-                where table_name = desired.table_name
-                and column_name = desired.column_name
+                where table_name = d.table_name
+                and column_name = d.column_name
             )
         ),
         column_set_default as (
@@ -272,7 +270,7 @@ begin
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
-                'is_nullable', is_nullable
+                'is_nullable', is_nullable::bool
             )
             from column_to_alter
             where nullable_changed
@@ -283,7 +281,7 @@ begin
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
-                'is_nullable', is_nullable
+                'is_nullable', is_nullable::bool
             )
             from column_to_alter
             where nullable_changed
@@ -298,17 +296,70 @@ begin
             )
             from column_to_alter
             where type_changed
+        ),
+        -- constraint_to_create as (
+        --     with missing as (
+        --         select indexrelid, indrelid
+        --         from pg_index i
+        --         join pg_class c on i.indexrelid = c.oid
+        --         join pg_namespace n on c.relnamespace = n.oid
+        --         where nspname = desired
+        --         except
+        --         select indexrelid, indrelid
+        --         from pg_index i
+        --         join pg_class c on i.indexrelid = c.oid
+        --         join pg_namespace n on c.relnamespace = n.oid
+        --         where nspname = target
+        --     )
+        --     select 'create index', jsonb_build_object(
+        --         'schema_name', target,
+        --         'index_name', indexrelid::regclass,
+        --         'table_name', indrelid::regclass,
+        --         'ddl',  pg_get_indexdef(indexrelid)
+        --     ) from missing
+        -- ),
+        index_to_create as (
+            with missing as (
+                select dc.relname, di.indrelid::regclass, di.indexrelid
+                from pg_index di
+                join pg_class dc on di.indexrelid = dc.oid and dc.relnamespace = desired::regnamespace::oid
+                left join pg_class tc on tc.relname = dc.relname and tc.relnamespace = target::regnamespace::oid
+                where tc.oid is null
+            )
+            select 'create index', jsonb_build_object(
+                'schema_name', target,
+                'index_name', relname,
+                'table_name', indrelid,
+                'ddl',  replace(pg_get_indexdef(indexrelid), desired || '.', target || '.')
+            ) from missing
+        ),
+        index_to_drop as (
+            with extra as (
+                select tc.relname, ti.indrelid::regclass
+                from pg_index ti
+                join pg_class tc on ti.indexrelid = tc.oid and tc.relnamespace = target::regnamespace::oid
+                left join pg_class dc on dc.relname = tc.relname and dc.relnamespace = desired::regnamespace::oid
+                where dc.oid is null
+            )
+            select 'drop index', jsonb_build_object(
+                'schema_name', target,
+                'index_name', relname,
+                'table_name', indrelid
+            )
+            from extra
         )
-        select 1, a::alteration from (table schema_to_create)      a union
-        select 2, a::alteration from (table table_to_create)       a union
-        select 3, a::alteration from (table table_to_drop)         a union
-        select 4, a::alteration from (table column_to_add)         a union
-        select 5, a::alteration from (table column_to_drop)        a union
-        select 6, a::alteration from (table column_set_default)    a union
-        select 7, a::alteration from (table column_drop_default)   a union
-        select 8, a::alteration from (table column_drop_not_null)  a union
-        select 9, a::alteration from (table column_set_not_null)   a union
-        select 10, a::alteration from (table column_type) a
+        select 1,  a::alteration from (table schema_to_create)      a union
+        select 2,  a::alteration from (table table_to_create)       a union
+        select 3,  a::alteration from (table table_to_drop)         a union
+        select 4,  a::alteration from (table column_to_add)         a union
+        select 5,  a::alteration from (table column_to_drop)        a union
+        select 6,  a::alteration from (table column_set_default)    a union
+        select 7,  a::alteration from (table column_drop_default)   a union
+        select 8,  a::alteration from (table column_drop_not_null)  a union
+        select 9,  a::alteration from (table column_set_not_null)   a union
+        select 10, a::alteration from (table index_to_create)       a union
+        select 11, a::alteration from (table index_to_drop)         a union
+        select 12, a::alteration from (table column_type) a
         order by 1
     loop
         return next alteration.a;
