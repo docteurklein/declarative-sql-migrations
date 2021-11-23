@@ -7,8 +7,7 @@ A postgres migration tool based on diffing 2 schemata.
 ## how?
 
 ```shell
-psql -f diff.sql
-psql -f desired.sql
+psql -a -f diff.sql -f example.sql
 ```
 
 ```sql
@@ -35,7 +34,21 @@ select ddl(a), * from alterations('desired', 'target') a;
 
 
 call pgdiff.migrate('desired', 'target',
-    dry_run => true,
+    dry_run => false,
     keep_extra => false
 );
+
+alter table desired.test1 add column test text not null default 'ah' check (length(test) > 0);
+
+select ddl(a), * from alterations('desired', 'target') a;
+
+-- alter table target.test1 add column test text not null default 'ah'::text           │     2 │ add column                 │ {"data_type": "text", "table_name": "test1", "column_name": "test", "is_nullable": "NO", "schema_name": "target", "column_default": "'ah'::text"}
+-- alter table target.test1 add constraint test1_test_check CHECK ((length(test) > 0)) │     5 │ alter table add constraint │ {"ddl": "CHECK ((length(test) > 0))", "table_name": "test1", "schema_name": "target", "constraint_name": "test1_test_check"}
+
+call pgdiff.migrate('desired', 'target',
+    dry_run => false,
+    keep_extra => false
+);
+
+select ddl(a), * from alterations('desired', 'target') a;
 ```
