@@ -218,13 +218,13 @@ begin
             where schemaname = target
         ),
         table_to_drop as (
-            select 1, 'drop table', jsonb_build_object(
+            select 7, 'drop table', jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = target
             except
-            select 1, 'drop table', jsonb_build_object(
+            select 7, 'drop table', jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
@@ -263,7 +263,7 @@ begin
                 from information_schema.columns
                 where table_schema = desired
             )
-            select 2, 'drop column', jsonb_build_object(
+            select 6, 'drop column', jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name
@@ -461,7 +461,7 @@ create procedure migrate(
     desired text,
     target text,
     dry_run bool default true,
-    keep_extra bool default false,
+    keep_data bool default false,
     cascade bool default false
 )
 language plpgsql as $$
@@ -470,7 +470,7 @@ declare
 begin
     for alteration in
         select ddl(a, cascade) from alterations(desired, target) a
-        where case when keep_extra is true
+        where case when keep_data is true
             then type not in ('drop table', 'drop column')
             else true
             end
