@@ -174,6 +174,22 @@ language sql strict immutable parallel safe as $$
     end;
 $$;
 
+-- create function table_to_drop(desired text, target text) returns setof alteration
+-- language sql as $$
+--     select 1, 'drop table'::ddl_type, jsonb_build_object(
+--         'schema_name', target,
+--         'table_name', tablename
+--     ) from pg_tables
+--     where schemaname = target
+--     except
+--     select 1, 'drop table'::ddl_type, jsonb_build_object(
+--         'schema_name', target,
+--         'table_name', tablename
+--     ) from pg_tables
+--     where schemaname = desired
+-- $$;
+
+
 create function alterations(desired text, target text) returns setof alteration
 language plpgsql as $$
 declare
@@ -329,7 +345,7 @@ begin
         ),
         constraint_to_create as (
             with missing as (
-                select dcl.relname as table_name, dc.conname as constraint_name, dc.oid, dc.contype
+                select dcl.relname, dc.conname, dc.oid, dc.contype
                 from pg_constraint dc
                 join pg_class dcl on dcl.oid = dc.conrelid
                 left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = to_regnamespace(target)::oid
@@ -342,15 +358,15 @@ begin
                 'alter table add constraint',
                 jsonb_build_object(
                     'schema_name', target,
-                    'constraint_name', constraint_name,
-                    'table_name', table_name,
+                    'constraint_name', conname,
+                    'table_name', relname,
                     'ddl', replace(pg_get_constraintdef(oid), desired || '.', target || '.' -- bad
                 )
             ) from missing
         ),
         constraint_to_alter as (
             with different as (
-                select dcl.relname as table_name, dc.conname as constraint_name, dc.condeferrable, dc.condeferred
+                select dcl.relname, dc.conname, dc.condeferrable, dc.condeferred
                 from pg_constraint dc
                 join pg_class dcl on dcl.oid = dc.conrelid
                 left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = to_regnamespace(target)::oid
@@ -363,15 +379,15 @@ begin
             )
             select 5, 'alter table alter constraint', jsonb_build_object(
                 'schema_name', target,
-                'constraint_name', constraint_name,
-                'table_name', table_name,
+                'constraint_name', conname,
+                'table_name', relname,
                 'deferrable', condeferrable::bool,
                 'deferred', condeferred::bool
             ) from different
         ),
         constraint_to_drop as (
             with extra as (
-                select dcl.relname as table_name, dc.conname as constraint_name, pg_get_constraintdef(dc.oid) as ddl
+                select dcl.relname, dc.conname
                 from pg_constraint dc
                 join pg_class dcl on dcl.oid = dc.conrelid
                 left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = desired::regnamespace::oid
@@ -381,8 +397,8 @@ begin
             )
             select 4, 'alter table drop constraint', jsonb_build_object(
                 'schema_name', target,
-                'constraint_name', constraint_name,
-                'table_name', table_name
+                'constraint_name', conname,
+                'table_name', relname
             ) from extra
         ),
         index_to_create as (
