@@ -1,6 +1,5 @@
 do $$ -- it creates missing tables
 begin
-    drop schema if exists test_target cascade;
     create table test1 ();
     create table test2 ();
     create table test3 ();
