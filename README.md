@@ -52,7 +52,7 @@ psql -q -f desired.sql -f diff.sql -c "call migrate('desired', 'target',
 ## run tests
 
 ```shell
-psql -q -f test/diff.sql
+psql -v ON_ERROR_STOP=1 -f test_init.sql $(find test -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
 ```
 
 ## example 
@@ -111,4 +111,6 @@ call pgdiff.migrate('desired', 'target',
 );
 
 select ddl(a), * from alterations('desired', 'target') a;
+
+-- done!
 ```
