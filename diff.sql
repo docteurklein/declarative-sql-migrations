@@ -182,7 +182,7 @@ language sql strict immutable parallel safe as $$
 $$;
 
 create function alterations(desired text, target text) returns setof alteration
-language plpgsql strict parallel safe as $$
+language plpgsql strict parallel restricted as $$
 declare
     alteration alteration;
 begin

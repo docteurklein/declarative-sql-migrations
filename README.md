@@ -22,14 +22,14 @@ function ddl(
 strict immutable parallel safe;
 
 -- execute any statement
-function exec(inout ddl text) strict parallel safe;
+function exec(inout ddl text) strict parallel unsafe;
 
 -- returns the set of all alterations to make "target" similar to "desired"
 function alterations(
     desired text, -- the reference schema
     target text -- the schema to alter
 ) returns setof alteration
-strict parallel safe;
+strict parallel restricted;
 
 -- prints and optionnaly executes all alterations
 procedure migrate(
@@ -53,6 +53,21 @@ psql -q -f desired.sql -f diff.sql -c "call migrate('desired', 'target',
 
 ```sql
 set search_path to pgdiff;
+
+drop schema if exists desired cascade;
+create schema desired;
+
+create table desired.test1 (
+    test1_id int not null primary key,
+    name text unique not null default 1,
+    price int check (price > 0)
+);
+create index test1_name on desired.test1 (name);
+
+create table desired.test2 (
+    test2_id int not null primary key,
+    test1_id int not null references desired.test1 (test1_id) deferrable
+);
 
 drop schema if exists target cascade; -- demo
 
