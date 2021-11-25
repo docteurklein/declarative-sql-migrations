@@ -181,6 +181,22 @@ language sql strict immutable parallel safe as $$
     end;
 $$;
 
+-- you should filter this on "desired_schema" and "target_schema" or you'll get the universe
+-- create view every_possible_column_to_add as
+--     select 2 as "order", 'alter table add column' as "type", jsonb_build_object(
+--         'table_name', d.table_name,
+--         'column_name', d.column_name,
+--         'is_nullable', d.is_nullable,
+--         'column_default', d.column_default,
+--         'data_type', d.data_type
+--     ) as details,
+--     d.table_schema as desired_schema,
+--     t.table_schema as target_schema
+--     from information_schema.columns d
+--     cross join information_schema.columns t
+--     order by d.table_name, d.ordinal_position asc
+-- ;
+
 create function alterations(desired text, target text) returns setof alteration
 language plpgsql strict parallel restricted as $$
 declare

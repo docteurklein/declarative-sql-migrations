@@ -49,6 +49,12 @@ psql -q -f desired.sql -f diff.sql -c "call migrate('desired', 'target',
 )"
 ```
 
+## run tests
+
+```shell
+psql -q -f test/diff.sql
+```
+
 ## example 
 
 ```sql
