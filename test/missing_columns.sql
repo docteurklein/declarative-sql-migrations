@@ -2,11 +2,12 @@ do $$ -- it adds missing columns
 declare
     stack text;
 begin
+    create schema test_desired;
     create schema test_target;
     create table test_target.test1 (id int);
-    create table test1 (id int, name text not null default 'ah!');
+    create table test_desired.test1 (id int, name text not null default 'ah!');
 
-    call migrate('pgdiff_test', 'test_target', dry_run => false);
+    call migrate('test_desired', 'test_target', dry_run => false);
 
     assert (select count(*) = 2 from information_schema.columns
         where table_schema = 'test_target'
