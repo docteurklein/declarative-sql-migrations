@@ -11,7 +11,6 @@ begin
     assert (select count(*) = 1 from information_schema.columns
         where table_schema = 'test_target'
         and table_name = 'test1'
-        and column_name in ('id')
     );
     rollback;
 -- exception when others then
