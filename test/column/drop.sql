@@ -1,7 +1,9 @@
-do $$ -- it adds missing columns
+do $$
 declare
     stack text;
 begin
+    raise info e'\nit adds missing columns\n';
+
     create schema test_desired;
     create schema test_target;
     create table test_desired.test1 (id int);

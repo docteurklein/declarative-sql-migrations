@@ -2,7 +2,11 @@
 
 \i diff.sql
 
-drop schema if exists pgdiff_test cascade;
-create schema pgdiff_test;
-set search_path to pgdiff_test, pgdiff;
+drop extension if exists dblink;
+create extension dblink;
+
+drop schema if exists test_target cascade;
+drop schema if exists test_desired cascade;
+
+set search_path to pgdiff;
 

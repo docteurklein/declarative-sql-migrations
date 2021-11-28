@@ -1,5 +1,7 @@
-do $$ -- it creates missing tables
+do $$
 begin
+    raise info e'\nit creates missing tables\n';
+
     create schema test_desired;
     create table test_desired.test1 ();
     create table test_desired.test2 ();

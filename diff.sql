@@ -47,9 +47,37 @@ create type alteration as (
     details jsonb
 );
 
-create function exec(inout ddl text)
-language plpgsql strict parallel safe
-as 'begin execute ddl; end;';
+create procedure exec(
+    ddl text,
+    lock_timeout text default '50ms',
+    max_attempts int default 30,
+    cap_ms bigint default 60000,
+    base_ms bigint default 10
+)
+language plpgsql as $$
+declare
+    delay_ms bigint = null;
+    ddl_completed bool = false;
+    begin
+        perform set_config('lock_timeout', lock_timeout, false);
+        for i in 1..max_attempts - 1 loop
+            begin
+                raise notice '%', ddl;
+                execute ddl;
+                ddl_completed = true;
+                exit;
+            exception when lock_not_available then
+                delay_ms := round(random() * least(cap_ms, base_ms * 2 ^ i));
+                raise warning 'attempt %/% for ddl "%" failed, retrying in %ms', i, max_attempts, ddl, delay_ms;
+
+                perform pg_sleep(delay_ms::numeric / 1000);
+            end;
+        end loop;
+        if not ddl_completed then
+            raise exception 'attempt %/% for ddl "%" failed', max_attempts, max_attempts, ddl;
+        end if;
+    end;
+$$;
 
 create function ddl(
     alteration alteration,
@@ -473,19 +501,18 @@ create procedure migrate(
 )
 language plpgsql as $$
 declare
-    alteration text;
+    ddl text;
 begin
-    for alteration in
+    for ddl in
         select ddl(a, cascade) from alterations(desired, target) a
         where case when keep_data is true
             then type not in ('drop table', 'drop column')
             else true
             end
     loop
-        raise notice '%', alteration;
         if dry_run is false
-            then execute alteration;
-            else null;
+            then call exec(ddl);
+            else raise notice '%', ddl;
         end if;
     end loop;
 end;

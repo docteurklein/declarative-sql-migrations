@@ -21,8 +21,14 @@ function ddl(
 ) returns text 
 strict immutable parallel safe;
 
--- execute any statement
-function exec(inout ddl text) strict parallel unsafe;
+-- execute or retires (expentional backoff with jitter) any statement due to lock failures
+create procedure exec(
+    ddl text,
+    lock_timeout text = '50ms',
+    max_attempts int = 30,
+    cap_ms bigint = 60000,
+    base_ms bigint = 10
+);
 
 -- returns the set of all alterations to make "target" similar to "desired"
 function alterations(
@@ -95,7 +101,7 @@ select ddl(a), * from alterations('desired', 'target') a;
 -- CREATE INDEX test1_name ON target.test1 USING btree (name)                                                                      │     6 │ create index               │ {"ddl": "CREATE INDEX test1_name ON target.test1 USING btree (name)", "index_name": "test1_name", "table_name": "desired.test1", "schema_name": "target"}
 
 
-call pgdiff.migrate('desired', 'target',
+call migrate('desired', 'target',
     dry_run => false
 );
 
@@ -106,7 +112,7 @@ select ddl(a), * from alterations('desired', 'target') a;
 -- alter table target.test1 add column test text not null default 'ah'::text           │     2 │ add column                 │ {"data_type": "text", "table_name": "test1", "column_name": "test", "is_nullable": "NO", "schema_name": "target", "column_default": "'ah'::text"}
 -- alter table target.test1 add constraint test1_test_check CHECK ((length(test) > 0)) │     5 │ alter table add constraint │ {"ddl": "CHECK ((length(test) > 0))", "table_name": "test1", "schema_name": "target", "constraint_name": "test1_test_check"}
 
-call pgdiff.migrate('desired', 'target',
+call migrate('desired', 'target',
     dry_run => false
 );
 
