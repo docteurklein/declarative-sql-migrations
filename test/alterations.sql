@@ -6,6 +6,7 @@ begin
     $it$;
 
     drop schema if exists desired cascade;
+    drop schema if exists target cascade;
     create schema desired;
     create table desired.test1 ();
 

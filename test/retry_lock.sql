@@ -5,10 +5,13 @@ begin
     it retries if lock_not_available
     $it$;
 
+    drop extension if exists dblink;
+    create extension dblink;
+
     drop schema if exists desired cascade;
+    drop schema if exists target cascade;
     create schema desired;
     create table desired.test1 as select 1 as i;
-    commit; -- unfortunately necessary for other sessions to see it
 
     perform dblink_connect('conn1', 'dbname=' || current_database());
 

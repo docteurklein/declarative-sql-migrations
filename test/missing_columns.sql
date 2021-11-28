@@ -8,6 +8,7 @@ begin
     $it$;
 
     drop schema if exists desired cascade;
+    drop schema if exists target cascade;
     create schema desired;
     create schema target;
     create table target.test1 (id int);
