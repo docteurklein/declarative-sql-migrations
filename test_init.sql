@@ -4,12 +4,16 @@
 
 set search_path to pgdiff;
 
-create function throws(statement text) returns bool
+create function throws(
+    statement text,
+    sqlstates text[] default '{}'::text[]
+) returns bool
 language plpgsql as $$
 begin
     execute statement;
     return false;
 exception when others then
-    return true;
+    raise debug e'"%" throws exception "%: %"', statement, sqlstate, sqlerrm;
+    return array[sqlstate] && sqlstates;
 end;
 $$;

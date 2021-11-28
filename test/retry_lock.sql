@@ -23,7 +23,7 @@ begin
     perform dblink_send_query('conn1', $sql$
         begin;
         select from target.test1;
-        select pg_sleep(greatest(1, floor(random() * 2)));
+        select pg_sleep(greatest(5, floor(random() * 8)));
         rollback;
     $sql$);
 
@@ -31,7 +31,7 @@ begin
     perform dblink_send_query('conn2', $sql$
         begin;
         select from target.test2;
-        select pg_sleep(greatest(1, floor(random() * 2)));
+        select pg_sleep(greatest(2, floor(random() * 3)));
         rollback;
     $sql$);
 
@@ -44,7 +44,7 @@ begin
     );
 
     -- assert col is not null
-    assert (select(throws('insert into target.test1 values (null)'))), 'test1.i should be not null';
-    assert (select(throws('insert into target.test2 values (null)'))), 'test2.i should be not null';
+    assert (select throws('insert into target.test1 values (null)', array['23502'])), 'test1.i should be not null';
+    assert (select throws('insert into target.test2 values (null)', array['23502'])), 'test2.i should be not null';
 end;
 $$;
