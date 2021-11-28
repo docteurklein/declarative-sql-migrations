@@ -13,10 +13,10 @@ begin
     assert (
         with expected as (
             values
-            (0 ,  'create schema'::ddl_type , jsonb_build_object(
+            (0, 'create schema'::ddl_type, jsonb_build_object(
                 'schema_name', 'target'
             )),
-            (1 ,  'create table'::ddl_type  , jsonb_build_object(
+            (1, 'create table'::ddl_type , jsonb_build_object(
                 'schema_name', 'target',
                 'table_name', 'test1'
             ))

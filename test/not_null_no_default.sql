@@ -15,7 +15,7 @@ begin
 
 
     begin
-        call migrate('desired', 'target', dry_run => false);
+        call migrate('desired', 'target', dry_run => false, max_attempts => 1);
     exception when others then
         return;
     end;

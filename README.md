@@ -18,16 +18,17 @@ type alteration as (
 function ddl(
     alteration alteration,
     cascade bool default false -- include "CASCADE" in emitted statements that support it
-) returns text 
+) returns text
 strict immutable parallel safe;
 
--- execute or retires (expentional backoff with jitter) any statement due to lock failures
+-- execute or retires (expentional backoff with jitter) any statement that throws any of sqlstates
 create procedure exec(
     ddl text,
     lock_timeout text = '50ms',
     max_attempts int = 30,
     cap_ms bigint = 60000,
-    base_ms bigint = 10
+    base_ms bigint = 10,
+    sqlstates text[] default '{}'::text[]
 );
 
 -- returns the set of all alterations to make "target" similar to "desired"
@@ -43,7 +44,12 @@ procedure migrate(
     target text -- the schema to alter
     dry_run bool default true, -- only print
     keep_data bool default false, -- do not emit "DROP" statements that remove data
-    cascade bool default false -- include "CASCADE" in emitted statements that support it
+    cascade bool default false, -- include "CASCADE" in emitted statements that support it
+    lock_timeout text = '50ms',
+    max_attempts int = 30,
+    cap_ms bigint = 60000,
+    base_ms bigint = 10,
+    sqlstates text[] default '{}'::text[]
 );
 ```
 

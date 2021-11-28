@@ -44,7 +44,10 @@ begin
     );
 
     -- assert col is not null
-    assert (select throws('insert into target.test1 values (null)', array['23502'])), 'test1.i should be not null';
-    assert (select throws('insert into target.test2 values (null)', array['23502'])), 'test2.i should be not null';
+    assert throws('insert into target.test1 values (null)', sqlstates => array['23502']),
+        'test1.i should be not null';
+
+    assert throws('insert into target.test2 values (null)', sqlstates => array['23502']),
+        'test2.i should be not null';
 end;
 $$;
