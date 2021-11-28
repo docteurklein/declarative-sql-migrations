@@ -70,7 +70,11 @@ create procedure migrate(
     target text,
     dry_run bool default true,
     keep_data bool default false,
-    cascade bool default false
+    cascade bool default false,
+    lock_timeout text default '50ms',
+    max_attempts int default 30,
+    cap_ms bigint default 60000,
+    base_ms bigint default 10
 )
 language plpgsql as $$
 declare
@@ -84,7 +88,13 @@ begin
             end
     loop
         if dry_run is false
-            then call exec(ddl);
+            then call exec(
+                ddl,
+                lock_timeout => lock_timeout,
+                max_attempts => max_attempts,
+                cap_ms => cap_ms,
+                base_ms => base_ms
+            );
             else raise notice '%', ddl;
         end if;
     end loop;

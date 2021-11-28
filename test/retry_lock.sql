@@ -11,29 +11,40 @@ begin
     drop schema if exists desired cascade;
     drop schema if exists target cascade;
     create schema desired;
-    create table desired.test1 as select 1 as i;
+    create schema target;
+    create table target.test1 as select 1 as i; -- i int null
+    create table target.test2 as select 1 as i; -- i int null
+    commit; --necessary for other sessions to see
 
     perform dblink_connect('conn1', 'dbname=' || current_database());
+    perform dblink_connect('conn2', 'dbname=' || current_database());
 
-    -- session1: create a locking select for a while then rollback
+    -- session1: create a locking select on test1 for a while then rollback
     perform dblink_send_query('conn1', $sql$
         begin;
-        select from desired.test1;  -- generate a concurrent lock
-        select pg_sleep(greatest(1, floor(random() * 2))); -- sleep for 1 to 2 seconds
+        select from target.test1;
+        select pg_sleep(greatest(1, floor(random() * 2)));
         rollback;
     $sql$);
 
-    -- session2: attempt to alter, impossible for now because of lock
-    call pgdiff.exec('alter table desired.test1 alter column i set not null',
-        max_attempts => 10
+    -- session2: create a locking select on test2 for a while then rollback
+    perform dblink_send_query('conn2', $sql$
+        begin;
+        select from target.test2;
+        select pg_sleep(greatest(1, floor(random() * 2)));
+        rollback;
+    $sql$);
+
+    -- session3: attempt to alter, impossible for now because of lock
+    create table desired.test1 (i int not null);
+    create table desired.test2 (i int not null);
+    call migrate('desired', 'target',
+        max_attempts => 20,
+        dry_run => false
     );
 
     -- assert col is not null
-    begin
-        insert into desired.test1 values (null);
-    exception when others then
-        return;
-    end;
-    raise exception 'desired.test1.i should be not null';
+    assert (select(throws('insert into target.test1 values (null)'))), 'test1.i should be not null';
+    assert (select(throws('insert into target.test2 values (null)'))), 'test2.i should be not null';
 end;
 $$;
