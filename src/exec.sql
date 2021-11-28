@@ -21,8 +21,7 @@ declare
             exception when others then
                 if (select cardinality(sqlstates) = 0 or array[sqlstate] && sqlstates) then
                     delay_ms := round(random() * least(cap_ms, base_ms * 2 ^ i));
-                    -- raise warning 'attempt %/% for statement "%" failed, retrying in %ms', i, max_attempts, statement, delay_ms;
-                    raise warning e'%/%: "%" throws exception "%: %"', i, max_attempts, statement, sqlstate, sqlerrm;
+                    raise warning e'%/%: "%" throws exception "%: %"\nsleeping %ms', i, max_attempts, statement, sqlstate, sqlerrm, delay_ms;
 
                     perform pg_sleep(delay_ms::numeric / 1000);
                 else

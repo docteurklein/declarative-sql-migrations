@@ -1,19 +1,24 @@
 do $$
-declare
-    stack text;
 begin
     raise info $it$
 
     it executes and retries some statements
     $it$;
 
-    call exec('select 1');
-    assert (select throws($sql$
-        call exec('select 1/0', max_attempts => 3)
-    $sql$));
+    assert not throws($sql$
+        call exec('select 1')
+    $sql$);
 
--- exception when others then
---     get stacked diagnostics stack = pg_exception_context;
---     raise exception 'STACK TRACE: %', stack;
+    assert throws($sql$
+        call exec('select 1/0', max_attempts => 2)
+    $sql$);
+
+    assert timing($sql$
+        do $do$
+        begin
+            call exec('select 1/0', max_attempts => 10);
+        exception when others then return; end;
+        $do$;
+    $sql$) > interval '2 seconds', 'runs for long';
 end;
 $$;
