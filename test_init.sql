@@ -5,8 +5,8 @@
 drop extension if exists dblink;
 create extension dblink;
 
-drop schema if exists test_target cascade;
-drop schema if exists test_desired cascade;
+drop schema if exists target cascade;
+drop schema if exists desired cascade;
 
 set search_path to pgdiff;
 

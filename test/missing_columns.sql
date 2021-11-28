@@ -2,17 +2,21 @@ do $$
 declare
     stack text;
 begin
-    raise info e'\nit adds missing columns\n';
+    raise info $it$
 
-    create schema test_desired;
-    create schema test_target;
-    create table test_target.test1 (id int);
-    create table test_desired.test1 (id int, name text not null default 'ah!');
+    it adds missing columns
+    $it$;
 
-    call migrate('test_desired', 'test_target', dry_run => false);
+    drop schema if exists desired cascade;
+    create schema desired;
+    create schema target;
+    create table target.test1 (id int);
+    create table desired.test1 (id int, name text not null default 'ah!');
+
+    call migrate('desired', 'target', dry_run => false);
 
     assert (select count(*) = 2 from information_schema.columns
-        where table_schema = 'test_target'
+        where table_schema = 'target'
         and table_name = 'test1'
         and column_name in ('id', 'name')
     );
