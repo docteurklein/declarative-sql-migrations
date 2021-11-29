@@ -28,7 +28,7 @@ create procedure exec(
     max_attempts int = 30,
     cap_ms bigint = 60000,
     base_ms bigint = 10,
-    sqlstates text[] default '{}'::text[]
+    sqlstates text[] default '{}'::text[] -- see https://www.postgresql.org/docs/current/errcodes-appendix.html
 );
 
 -- returns the set of all alterations to make "target" similar to "desired"

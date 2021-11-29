@@ -16,8 +16,10 @@ begin
     assert timing($sql$
         do $do$
         begin
-            call exec('select 1/0', max_attempts => 10);
-        exception when others then return; end;
+            assert throws($sql2$
+                call exec('select 1/0', max_attempts => 10);
+            $sql2$, message_like => '%attempt 10/10%');
+        end;
         $do$;
     $sql$) > interval '2 seconds', 'runs for long';
 end;
