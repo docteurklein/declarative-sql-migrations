@@ -1,11 +1,15 @@
-create function alterations(desired text, target text) returns setof alteration
+create function alterations(
+    desired text,
+    target text,
+    cascade bool default false
+) returns setof alteration
 language plpgsql strict parallel restricted as $$
 declare
     alteration alteration;
 begin
     for alteration in
         with schema_to_create as (
-            select 0, 'create schema', jsonb_build_object(
+            select 0, 'create schema', format('create schema %I', target), jsonb_build_object(
                 'schema_name', target
             ) from pg_namespace
             where not exists (
@@ -13,26 +17,32 @@ begin
             )
         ),
         table_to_create as (
-            select 1, 'create table', jsonb_build_object(
+            select 1, 'create table', format('create table %I.%I ()', target, tablename), jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = desired
             except
-            select 1, 'create table', jsonb_build_object(
+            select 1, 'create table', format('create table %I.%I ()', target, tablename), jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = target
         ),
         table_to_drop as (
-            select 7, 'drop table', jsonb_build_object(
+            select 7, 'drop table', 
+            format('drop table %I.%I%s', target, tablename, 
+                case cascade when true then ' cascade' else '' end
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = target
             except
-            select 7, 'drop table', jsonb_build_object(
+            select 7, 'drop table', 
+            format('drop table %I.%I%s', target, tablename, 
+                case cascade when true then ' cascade' else '' end
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
@@ -48,7 +58,21 @@ begin
                 from information_schema.columns
                 where table_schema = target
             )
-            select 2, 'alter table add column', jsonb_build_object(
+            select 2, 'alter table add column', format(
+                'alter table %I.%I add column %I %s %s %s',
+                target,
+                table_name,
+                column_name,
+                data_type,
+                case is_nullable::bool
+                    when true then ''
+                    else 'not null'
+                end,
+                case when column_default is not null
+                    then format('default %s', column_default)
+                    else ''
+                end
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -71,7 +95,12 @@ begin
                 from information_schema.columns
                 where table_schema = desired
             )
-            select 6, 'drop column', jsonb_build_object(
+            select 6, 'drop column', format(
+                'alter table %I.%I drop column %I',
+                target,
+                table_name,
+                column_name
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name
@@ -98,7 +127,13 @@ begin
             )
         ),
         column_to_set_default as (
-            select 3, 'alter column set default', jsonb_build_object(
+            select 3, 'alter column set default', format(
+                'alter table %I.%I alter column %I set default %s',
+                target,
+                table_name,
+                column_name,
+                column_default
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -109,7 +144,12 @@ begin
             and column_default is not null
         ),
         column_to_drop_default as (
-            select 3, 'alter column drop default', jsonb_build_object(
+            select 3, 'alter column drop default', format(
+                'alter table %I.%I alter column %I drop default',
+                target,
+                table_name,
+                column_name
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -120,7 +160,12 @@ begin
             and column_default is null
         ),
         column_to_drop_not_null as (
-            select 3, 'alter column drop not null', jsonb_build_object(
+            select 3, 'alter column drop not null', format(
+                'alter table %I.%I alter column %I drop not null',
+                target,
+                table_name,
+                column_name
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -131,7 +176,12 @@ begin
             and is_nullable::bool
         ),
         column_to_set_not_null as (
-            select 3, 'alter column set not null', jsonb_build_object(
+            select 3, 'alter column set not null', format(
+                'alter table %I.%I alter column %I set not null',
+                target,
+                table_name,
+                column_name
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -142,7 +192,13 @@ begin
             and not is_nullable::bool
         ),
         column_to_set_type as (
-            select 3, 'alter column type', jsonb_build_object(
+            select 3, 'alter column type', format(
+                'alter table %I.%I alter column %I type %s',
+                target,
+                table_name,
+                column_name,
+                data_type
+            ), jsonb_build_object(
                 'schema_name', target,
                 'table_name', table_name,
                 'column_name', column_name,
@@ -159,22 +215,27 @@ begin
                 left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = to_regnamespace(target)::oid
                 where tc.oid is null
                 and dc.contype in ('f', 'p', 'c', 'u')
-                and dc.connamespace = desired::regnamespace 
+                and dc.connamespace = desired::regnamespace
             )
-            select 
+            select
                 case contype when 'p' then 4 else 5 end, -- primary key first
                 'alter table add constraint',
+                format('alter table %I.%I add constraint %s %s',
+                    target,
+                    relname,
+                    conname,
+                    replace(pg_get_constraintdef(oid), desired || '.', target || '.') -- bad
+                ),
                 jsonb_build_object(
                     'schema_name', target,
                     'constraint_name', conname,
-                    'table_name', relname,
-                    'ddl', replace(pg_get_constraintdef(oid), desired || '.', target || '.' -- bad
+                    'table_name', relname
                 )
-            ) from missing
+            from missing
         ),
         constraint_to_alter as (
             with different as (
-                select dcl.relname, dc.conname, dc.condeferrable, dc.condeferred
+                select dcl.relname, dc.conname, dc.condeferrable as _deferrable, dc.condeferred as deferred
                 from pg_constraint dc
                 join pg_class dcl on dcl.oid = dc.conrelid
                 left join pg_constraint tc on tc.conname = dc.conname and tc.connamespace = to_regnamespace(target)::oid
@@ -183,14 +244,27 @@ begin
                     or tc.condeferrable != dc.condeferrable
                 )
                 and dc.contype in ('f') -- only fkeys are supported
-                and dc.connamespace = desired::regnamespace 
+                and dc.connamespace = desired::regnamespace
             )
-            select 5, 'alter table alter constraint', jsonb_build_object(
+            select 5, 'alter table alter constraint', format(
+                'alter table %I.%I alter constraint %s %s %s',
+                target,
+                relname,
+                conname,
+                case _deferrable::bool
+                    when true then 'deferrable'
+                    else 'not deferrable'
+                end,
+                case when deferred::bool
+                    then 'initially deferred'
+                    else 'initially immediate'
+                end
+            ), jsonb_build_object(
                 'schema_name', target,
                 'constraint_name', conname,
                 'table_name', relname,
-                'deferrable', condeferrable::bool,
-                'deferred', condeferred::bool
+                'deferrable', _deferrable,
+                'deferred', deferred
             ) from different
         ),
         constraint_to_drop as (
@@ -203,7 +277,11 @@ begin
                 and dc.contype in ('f', 'p', 'c', 'u')
                 and dc.connamespace = to_regnamespace(target)
             )
-            select 4, 'alter table drop constraint', jsonb_build_object(
+            select 4, 'alter table drop constraint', format('alter table %I.%I drop constraint %s',
+                target,
+                relname,
+                conname
+            ), jsonb_build_object(
                 'schema_name', target,
                 'constraint_name', conname,
                 'table_name', relname
@@ -219,12 +297,14 @@ begin
                 and not di.indisprimary
                 and not di.indisunique
             )
-            select 6, 'create index', jsonb_build_object(
+            select 6, 'create index',
+            replace(pg_get_indexdef(indexrelid), desired || '.', target || '.'), -- bad
+            jsonb_build_object(
                 'schema_name', target,
                 'index_name', relname,
-                'table_name', indrelid,
-                'ddl',  replace(pg_get_indexdef(indexrelid), desired || '.', target || '.') -- bad
-            ) from missing
+                'table_name', indrelid
+            )
+            from missing
         ),
         index_to_drop as (
             with extra as (
@@ -236,7 +316,11 @@ begin
                 and not ti.indisprimary
                 and not ti.indisunique
             )
-            select 6, 'drop index', jsonb_build_object(
+            select 6, 'drop index', format(
+                'drop index %I.%I',
+                target,
+                relname
+            ), jsonb_build_object(
                 'schema_name', target,
                 'index_name', relname,
                 'table_name', indrelid

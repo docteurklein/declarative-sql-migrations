@@ -4,7 +4,6 @@ create procedure migrate(
     target text,
     dry_run bool default true,
     keep_data bool default false,
-    cascade bool default false,
     lock_timeout text default '50ms',
     max_attempts int default 30,
     cap_ms bigint default 60000,
@@ -13,10 +12,10 @@ create procedure migrate(
 )
 language plpgsql as $$
 declare
-    ddl text;
+    alteration alteration;
 begin
-    for ddl in
-        select ddl(a, cascade) from alterations(desired, target) a
+    for alteration in
+        select * from alterations(desired, target)
         where case when keep_data is true
             then type not in ('drop table', 'drop column')
             else true
@@ -24,14 +23,14 @@ begin
     loop
         if dry_run is false
             then call exec(
-                ddl,
+                alteration.ddl,
                 lock_timeout => lock_timeout,
                 max_attempts => max_attempts,
                 cap_ms => cap_ms,
                 base_ms => base_ms,
                 sqlstates => sqlstates
             );
-            else raise notice '%', ddl;
+            else raise notice '%', alteration.ddl;
         end if;
     end loop;
 end;

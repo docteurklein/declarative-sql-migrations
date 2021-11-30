@@ -26,10 +26,10 @@ create type ddl_type as enum (
 create type alteration as (
     "order" int, -- smaller number means higher priority
     type ddl_type,
+    ddl text,
     details jsonb
 );
 
-\i src/format_ddl.sql
 \i src/alterations.sql
 \i src/exec.sql
 \i src/migrate.sql

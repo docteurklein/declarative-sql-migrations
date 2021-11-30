@@ -14,13 +14,6 @@ type alteration as (
     details jsonb
 );
 
--- render an alteration as SQL DDL statement
-function ddl(
-    alteration alteration,
-    cascade bool default false -- include "CASCADE" in emitted statements that support it
-) returns text
-strict immutable parallel safe;
-
 -- execute or retires (expentional backoff with jitter) any statement that throws any of sqlstates
 create procedure exec(
     ddl text,
@@ -34,7 +27,8 @@ create procedure exec(
 -- returns the set of all alterations to make "target" similar to "desired"
 function alterations(
     desired text, -- the reference schema
-    target text -- the schema to alter
+    target text -- the schema to alter,
+    cascade bool default false, -- include "CASCADE" in emitted statements that support it
 ) returns setof alteration
 strict parallel restricted;
 
@@ -89,7 +83,7 @@ create table desired.test2 (
 
 drop schema if exists target cascade; -- demo
 
-select ddl(a), * from alterations('desired', 'target') a;
+select * from alterations('desired', 'target') a;
 
 -- create schema target                                                                                                            │     0 │ create schema              │ {"schema_name": "target"}
 -- create table target.test1 ()                                                                                                    │     1 │ create table               │ {"table_name": "test1", "schema_name": "target"}
@@ -113,7 +107,7 @@ call migrate('desired', 'target',
 
 alter table desired.test1 add column test text not null default 'ah' check (length(test) > 0);
 
-select ddl(a), * from alterations('desired', 'target') a;
+select * from alterations('desired', 'target') a;
 
 -- alter table target.test1 add column test text not null default 'ah'::text           │     2 │ add column                 │ {"data_type": "text", "table_name": "test1", "column_name": "test", "is_nullable": "NO", "schema_name": "target", "column_default": "'ah'::text"}
 -- alter table target.test1 add constraint test1_test_check CHECK ((length(test) > 0)) │     5 │ alter table add constraint │ {"ddl": "CHECK ((length(test) > 0))", "table_name": "test1", "schema_name": "target", "constraint_name": "test1_test_check"}
@@ -122,7 +116,7 @@ call migrate('desired', 'target',
     dry_run => false
 );
 
-select ddl(a), * from alterations('desired', 'target') a;
+select * from alterations('desired', 'target') a;
 
 -- done!
 ```
