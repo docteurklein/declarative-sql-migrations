@@ -35,7 +35,8 @@ begin
                 case cascade when true then ' cascade' else '' end
             ), jsonb_build_object(
                 'schema_name', target,
-                'table_name', tablename
+                'table_name', tablename,
+                'cascade', cascade
             ) from pg_tables
             where schemaname = target
             except
@@ -44,7 +45,8 @@ begin
                 case cascade when true then ' cascade' else '' end
             ), jsonb_build_object(
                 'schema_name', target,
-                'table_name', tablename
+                'table_name', tablename,
+                'cascade', cascade
             ) from pg_tables
             where schemaname = desired
         ),

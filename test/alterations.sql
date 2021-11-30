@@ -53,7 +53,8 @@ begin
                 'drop table target.test1 cascade',
                 jsonb_build_object(
                     'table_name', 'test1',
-                    'schema_name', 'target'
+                    'schema_name', 'target',
+                    'cascade', true
                 )
             )
         ),
