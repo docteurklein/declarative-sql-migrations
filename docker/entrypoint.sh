@@ -20,18 +20,22 @@ fi
 if [[ ! -f /etc/login.defs ]]; then
   touch /etc/login.defs
 fi
-echo 'ALL ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/all.conf
+
+# custom stuff
 
 cp /share/postgresql/extension/plpgsql_check* "$(pg_config --sharedir)/extension/" -v
 cp /lib/plpgsql_check.so "$(pg_config --pkglibdir)/" -v
 
-useradd -m app
+useradd -m postgres
 
 mkdir -p "$PGDATA" /run/postgresql
-chown -R app:app "$PGDATA" /run/postgresql
+chown -R postgres:postgres "$PGDATA" /run/postgresql
 
-[ ! -d "$PGDATA" ] && sudo -E -u app pg_ctl initdb && sudo -E -u app createdb
+echo 'ALL ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/all.conf
 
-sudo -E -u app pg_ctl -w start
+if [ ! "$(ls -A $PGDATA)" ]; then
+    sudo -E -u postgres pg_ctl initdb
+fi
+sudo -E -u postgres pg_ctl -w start
 
 exec "$@"

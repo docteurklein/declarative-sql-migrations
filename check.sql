@@ -1,3 +1,6 @@
+\pset pager off
+\x
+
 select
     (pcf).functionid::regprocedure, (pcf).lineno, (pcf).statement,
     (pcf).sqlstate, (pcf).message, (pcf).detail, (pcf).hint, (pcf).level,
