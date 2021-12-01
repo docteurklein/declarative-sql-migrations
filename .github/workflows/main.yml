@@ -28,7 +28,7 @@ jobs:
       uses: actions/checkout@v2
 
     - name: run tests
-      run: psql -av ON_ERROR_STOP=1 -f test_init.sql -f check.sql $(find test -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
+      run: psql -qv ON_ERROR_STOP=1 -f test_init.sql $(find test -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
       env:
         PGHOST: '127.0.0.1'
         PGUSER: postgres

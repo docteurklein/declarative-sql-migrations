@@ -5,6 +5,14 @@ begin
     it returns a set of alterations
     $it$;
 
+
+    assert (
+        with checks as (
+            select id(c) from plpgsql_check_function_tb('alterations(text,text,bool)') c
+        )
+        select 0 = count(*) from checks
+    );
+
     drop schema if exists desired cascade;
     drop schema if exists target cascade;
     create schema desired;
