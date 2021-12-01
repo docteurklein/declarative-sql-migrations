@@ -10,7 +10,9 @@ create procedure migrate(
     base_ms bigint default 10,
     sqlstates text[] default '{}'::text[]
 )
-language plpgsql as $$
+language plpgsql
+set search_path to pgdiff
+as $$
 declare
     alteration alteration;
 begin

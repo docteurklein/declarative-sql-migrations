@@ -3,7 +3,9 @@ create function alterations(
     target text,
     cascade bool default false
 ) returns setof alteration
-language plpgsql strict parallel restricted as $$
+language plpgsql strict parallel restricted
+set search_path to pgdiff
+as $$
 declare
     alteration alteration;
 begin

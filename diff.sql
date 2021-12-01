@@ -22,6 +22,7 @@ create type ddl_type as enum (
     'drop table',
     'drop column'
 );
+create cast (text as ddl_type) with inout as implicit;
 
 create type alteration as (
     "order" int, -- smaller number means higher priority
