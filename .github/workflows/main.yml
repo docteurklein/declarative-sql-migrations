@@ -12,12 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:latest
+        image: yassun4dev/plpgsql-check
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
-        # Set health checks to wait until postgres has started
         options:
           --health-cmd pg_isready
           --health-interval 10s

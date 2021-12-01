@@ -1,10 +1,13 @@
 \set ON_ERROR_STOP on
 
-set search_path to pgdiff;
+set search_path to pgdiff, public;
+
 
 \i diff.sql
 \i src/throws.sql
 \i src/time.sql
+
+create extension plpgsql_check;
 
 create procedure assert_equals(expected text, actual text, context text default '')
 language plpgsql as $$
@@ -16,9 +19,10 @@ exception when assert_failure then
 end;
 $$;
 
-create function id(inout record)
+create function id(record) returns record
 language plpgsql as $$
 begin
     raise notice '%', $1;
+    return $1;
 end;
 $$;

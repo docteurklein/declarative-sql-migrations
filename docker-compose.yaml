@@ -1,10 +1,15 @@
 services:
   postgres:
-    #image: nixery.dev/shell/su/sudo/shadow/postgresql_14/postgresql14packages.plpgsql_check
-    image: yassun4dev/plpgsql-check
-    #entrypoint: sh /app/docker/entrypoint.sh
+    image: nixery.dev/shell/less/sudo/shadow/postgresql_14/postgresql14packages.plpgsql_check
+    #image: yassun4dev/plpgsql-check
+    entrypoint: sh /app/docker/entrypoint.sh
+    command: psql -U app app
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
+      PGDATA: /var/lib/postgres
     volumes:
       - ./:/app
+      - postgres:/var/lib/postgres
 
+volumes:
+  postgres:
