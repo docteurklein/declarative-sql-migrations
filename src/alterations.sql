@@ -3,7 +3,7 @@ create function alterations(
     target text,
     cascade bool default false
 ) returns setof alteration
-language plpgsql strict parallel restricted
+language plpgsql strict stable
 set search_path to pgdiff
 as $$
 declare
@@ -11,7 +11,7 @@ declare
 begin
     for alteration in
         with schema_to_create as (
-            select 0, 'create schema', format('create schema %I', target), jsonb_build_object(
+            select 0, 'create schema'::ddl_type, format('create schema %I', target), jsonb_build_object(
                 'schema_name', target
             ) from pg_namespace
             where not exists (
@@ -19,20 +19,20 @@ begin
             )
         ),
         table_to_create as (
-            select 1, 'create table', format('create table %I.%I ()', target, tablename), jsonb_build_object(
+            select 1, 'create table'::ddl_type, format('create table %I.%I ()', target, tablename), jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = desired
             except
-            select 1, 'create table', format('create table %I.%I ()', target, tablename), jsonb_build_object(
+            select 1, 'create table'::ddl_type, format('create table %I.%I ()', target, tablename), jsonb_build_object(
                 'schema_name', target,
                 'table_name', tablename
             ) from pg_tables
             where schemaname = target
         ),
         table_to_drop as (
-            select 7, 'drop table', 
+            select 7, 'drop table'::ddl_type, 
             format('drop table %I.%I%s', target, tablename, 
                 case cascade when true then ' cascade' else '' end
             ), jsonb_build_object(
@@ -42,7 +42,7 @@ begin
             ) from pg_tables
             where schemaname = target
             except
-            select 7, 'drop table', 
+            select 7, 'drop table'::ddl_type, 
             format('drop table %I.%I%s', target, tablename, 
                 case cascade when true then ' cascade' else '' end
             ), jsonb_build_object(
@@ -62,7 +62,7 @@ begin
                 from information_schema.columns
                 where table_schema = target
             )
-            select 2, 'alter table add column', format(
+            select 2, 'alter table add column'::ddl_type, format(
                 'alter table %I.%I add column %I %s %s %s',
                 target,
                 table_name,
@@ -99,7 +99,7 @@ begin
                 from information_schema.columns
                 where table_schema = desired
             )
-            select 6, 'drop column', format(
+            select 6, 'drop column'::ddl_type, format(
                 'alter table %I.%I drop column %I',
                 target,
                 table_name,
@@ -131,7 +131,7 @@ begin
             )
         ),
         column_to_set_default as (
-            select 3, 'alter column set default', format(
+            select 3, 'alter column set default'::ddl_type, format(
                 'alter table %I.%I alter column %I set default %s',
                 target,
                 table_name,
@@ -148,7 +148,7 @@ begin
             and column_default is not null
         ),
         column_to_drop_default as (
-            select 3, 'alter column drop default', format(
+            select 3, 'alter column drop default'::ddl_type, format(
                 'alter table %I.%I alter column %I drop default',
                 target,
                 table_name,
@@ -164,7 +164,7 @@ begin
             and column_default is null
         ),
         column_to_drop_not_null as (
-            select 3, 'alter column drop not null', format(
+            select 3, 'alter column drop not null'::ddl_type, format(
                 'alter table %I.%I alter column %I drop not null',
                 target,
                 table_name,
@@ -180,7 +180,7 @@ begin
             and is_nullable::bool
         ),
         column_to_set_not_null as (
-            select 3, 'alter column set not null', format(
+            select 3, 'alter column set not null'::ddl_type, format(
                 'alter table %I.%I alter column %I set not null',
                 target,
                 table_name,
@@ -196,7 +196,7 @@ begin
             and not is_nullable::bool
         ),
         column_to_set_type as (
-            select 3, 'alter column type', format(
+            select 3, 'alter column type'::ddl_type, format(
                 'alter table %I.%I alter column %I type %s',
                 target,
                 table_name,
@@ -223,7 +223,7 @@ begin
             )
             select
                 case contype when 'p' then 4 else 5 end, -- primary key first
-                'alter table add constraint',
+                'alter table add constraint'::ddl_type,
                 format('alter table %I.%I add constraint %s %s',
                     target,
                     relname,
@@ -250,7 +250,7 @@ begin
                 and dc.contype in ('f') -- only fkeys are supported
                 and dc.connamespace = desired::regnamespace
             )
-            select 5, 'alter table alter constraint', format(
+            select 5, 'alter table alter constraint'::ddl_type, format(
                 'alter table %I.%I alter constraint %s %s %s',
                 target,
                 relname,
@@ -281,7 +281,7 @@ begin
                 and dc.contype in ('f', 'p', 'c', 'u')
                 and dc.connamespace = to_regnamespace(target)
             )
-            select 4, 'alter table drop constraint', format('alter table %I.%I drop constraint %s',
+            select 4, 'alter table drop constraint'::ddl_type, format('alter table %I.%I drop constraint %s',
                 target,
                 relname,
                 conname
@@ -301,7 +301,7 @@ begin
                 and not di.indisprimary
                 and not di.indisunique
             )
-            select 6, 'create index',
+            select 6, 'create index'::ddl_type,
             replace(pg_get_indexdef(indexrelid), desired || '.', target || '.'), -- bad
             jsonb_build_object(
                 'schema_name', target,
@@ -312,22 +312,23 @@ begin
         ),
         index_to_drop as (
             with extra as (
-                select tc.relname, ti.indrelid::regclass
+                select tc.relname, dt.relname as table_name
                 from pg_index ti
                 join pg_class tc on ti.indexrelid = tc.oid and tc.relnamespace = to_regnamespace(target)::oid
                 left join pg_class dc on dc.relname = tc.relname and dc.relnamespace = desired::regnamespace::oid
+                left join pg_class dt on dt.oid = ti.indrelid
                 where dc.oid is null
                 and not ti.indisprimary
                 and not ti.indisunique
             )
-            select 6, 'drop index', format(
+            select 6, 'drop index'::ddl_type, format(
                 'drop index %I.%I',
                 target,
                 relname
             ), jsonb_build_object(
                 'schema_name', target,
                 'index_name', relname,
-                'table_name', indrelid
+                'table_name', table_name
             )
             from extra
         )
@@ -348,7 +349,7 @@ begin
         table index_to_drop
         order by 1
     loop
-        return next alteration;
+        return next alteration::alteration;
     end loop;
 end;
 $$;

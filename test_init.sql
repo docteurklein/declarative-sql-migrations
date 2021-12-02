@@ -19,10 +19,10 @@ exception when assert_failure then
 end;
 $$;
 
-create function id(record) returns record
-language plpgsql as $$
+create function id(e anyelement) returns anyelement
+language plpgsql strict as $$
 begin
-    raise notice '%', $1;
-    return $1;
+    raise notice '%', e;
+    return e;
 end;
 $$;

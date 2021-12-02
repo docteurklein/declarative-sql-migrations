@@ -5,10 +5,9 @@ begin
     it returns a set of alterations
     $it$;
 
-
     assert (
         with checks as (
-            select id(c) from plpgsql_check_function_tb('alterations(text,text,bool)') c
+            select id(c) from plpgsql_check_function_tb('alterations(text,text,bool)', all_warnings => true) c
         )
         select 0 = count(*) from checks
     );
@@ -51,11 +50,21 @@ begin
     drop schema if exists target cascade;
     create schema desired;
     create schema target;
-    create table target.test1 ();
+    create table target.test1 (id int);
+    create index idx on target.test1 (id);
 
     assert (
         with expected as (
             values
+            (
+                6, 'drop index'::ddl_type,
+                'drop index target.idx',
+                jsonb_build_object(
+                    'schema_name', 'target',
+                    'index_name', 'idx',
+                    'table_name', 'test1'
+                )
+            ),
             (
                 7, 'drop table'::ddl_type,
                 'drop table target.test1 cascade',
