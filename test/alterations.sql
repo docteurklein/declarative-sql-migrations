@@ -7,7 +7,7 @@ begin
 
     assert (
         with checks as (
-            select id(c) from plpgsql_check_function_tb('alterations(text,text,bool)', all_warnings => true) c
+            select _log(c) from plpgsql_check_function_tb('alterations(text,text,bool)', all_warnings => true) c
         )
         select 0 = count(*) from checks
     );
@@ -79,7 +79,7 @@ begin
             select * from alterations('desired', 'target', cascade => true)
         ),
         diff as (
-            select id(a) from (table actual except table expected) a
+            select _log(a) from (table actual except table expected) a
         )
         select count(*) = 0
         from diff
