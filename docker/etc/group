@@ -1,3 +1,0 @@
-wheel:!:1:root,app
-root:!:0:
-postgres:x:1000:
