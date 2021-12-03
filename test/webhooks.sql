@@ -20,9 +20,13 @@ begin
 
     assert 1 = count(*) from pg_logical_slot_peek_changes('test_slot', null, null);
 
-    perform pg_logical_emit_message(true, 'wal2json', 'this message will be delivered');
-
-    call webhook('test_slot', 'http://httpbin.org/post', polls => 3);
+    call webhook(
+        'test_slot',
+        -- 'http://httpbin.org/post',
+        'http://0:8080/post',
+        polls => 3,
+        tables_like => array['desired.%']
+    );
 
     assert 0 = count(*) from pg_logical_slot_peek_changes('test_slot', null, null);
 end;
