@@ -18,28 +18,12 @@ begin
 
     insert into desired.test1 values (1);
 
-    assert 1 = count(*) from pg_logical_slot_peek_changes(
-        'test_slot',
-        null,
-        null,
-        'pretty-print', '1',
-        'add-msg-prefixes',
-        'wal2json',
-        'include-default', '1',
-        'format-version', '1'
-    );
+    assert 1 = count(*) from pg_logical_slot_peek_changes('test_slot', null, null);
 
-    call webhook('test_slot', 'http://localhost:8080/post', polls => 3);
+    perform pg_logical_emit_message(true, 'wal2json', 'this message will be delivered');
 
-    assert 0 = count(*) from pg_logical_slot_peek_changes(
-        'test_slot',
-        null,
-        null,
-        'pretty-print', '1',
-        'add-msg-prefixes',
-        'wal2json',
-        'include-default', '1',
-        'format-version', '1'
-    );
+    call webhook('test_slot', 'http://httpbin.org/post', polls => 3);
+
+    assert 0 = count(*) from pg_logical_slot_peek_changes('test_slot', null, null);
 end;
 $$;

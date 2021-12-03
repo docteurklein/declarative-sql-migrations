@@ -10,7 +10,7 @@ set parallel_setup_cost = 0
 set parallel_tuple_cost = 0
 as $$
 declare
-    response public.http_response;
+    response http_response;
     i int = 1;
 begin
     perform http_set_curlopt('curlopt_timeout', '30');
@@ -18,7 +18,7 @@ begin
 
     while coalesce(i <= polls, true) loop
         raise debug 'polling %...', i;
-        perform _log(data), _log(pgdiff.http((
+        perform _log(data), _log(http((
             'post',
             _url,
             array[http_header('accept','application/json')],
@@ -40,16 +40,3 @@ begin
     end loop;
 end;
 $$;
-
-create or replace function pgdiff.http(request public.http_request)
-returns public.http_response
-language plpgsql parallel safe -- make it parallelizable
-set search_path to pgdiff, public
-set parallel_setup_cost = 0
-set parallel_tuple_cost = 0
-as $$
-begin
-  return public.http(request);
-end;
-$$;
-

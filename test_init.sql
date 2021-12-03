@@ -22,7 +22,7 @@ $$;
 create function _log(e anyelement) returns anyelement
 language plpgsql strict as $$
 begin
-    raise debug '%', e;
+    raise notice '%', e;
     return e;
 end;
 $$;
