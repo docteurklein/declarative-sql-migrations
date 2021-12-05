@@ -1,11 +1,8 @@
 set local search_path to pgdiff;
 
-create extension if not exists http;
-
 create or replace procedure webhook(
     slot text, -- an exising locgical replication slot with wal2json
     _url text, -- url to push to
-    init text default null, -- emit any set returned by this statement
     polls int default null, -- number of times to poll before returning
     sleep int default 1, -- sleep interval
     tables_like text[] default null -- only changes matching `schema.table` (f.e: `public.app_%`)
@@ -21,17 +18,6 @@ declare
 begin
     perform http_set_curlopt('curlopt_timeout', '30');
     perform http_set_curlopt('curlopt_connecttimeout', '10');
-
-    if init is not null then
-        perform _log(data), _log(public.http((
-            'POST',
-            _url,
-            array[http_header('accept','application/json')],
-            'application/json',
-            data
-        )::http_request))
-        from query(init) as r(data jsonb);
-    end if;
 
     while coalesce(i <= polls, true) loop
         raise debug 'polling %: %...', slot, i;

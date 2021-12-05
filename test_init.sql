@@ -1,7 +1,5 @@
 \set ON_ERROR_STOP on
 
-\i src/main.sql
-
 set plpgsql.extra_warnings to 'all';
 set plpgsql.extra_errors to 'all';
 

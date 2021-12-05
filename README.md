@@ -59,7 +59,7 @@ psql -q -f example/desired.sql -f src/main.sql -c "call migrate('desired', 'targ
 ## run tests
 
 ```shell
-psql -q -f test_init.sql $(find test -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
+psql -q -f src/main.sql -f test_init.sql $(find test -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
 ```
 
 ## example 

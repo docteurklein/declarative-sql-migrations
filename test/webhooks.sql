@@ -1,5 +1,7 @@
 create extension if not exists http;
 
+\i src/webhook.sql
+
 do $$
 begin
     raise info $it$
@@ -24,7 +26,6 @@ begin
         'test_slot',
         'http://httpbin.org/post',
         -- 'http://0:8080/post',
-        init => 'select ''[1]''::jsonb',
         polls => 3,
         tables_like => array['desired.%']
     );
