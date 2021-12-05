@@ -57,7 +57,7 @@ begin
     into r;
     raise notice '%', r;
 
-    create function edge(
+    create or replace function edge(
         v record,
         t text,
         via text default null

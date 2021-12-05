@@ -16,7 +16,7 @@ type alteration as (
 );
 
 -- execute or retires (expentional backoff with jitter) any statement that throws any of sqlstates
-create procedure exec(
+procedure exec(
     ddl text,
     lock_timeout text = '50ms',
     max_attempts int = 30,
@@ -82,7 +82,7 @@ create table desired.test2 (
     test1_id int not null references desired.test1 (test1_id) deferrable
 );
 
-drop schema if exists target cascade; -- demo
+drop schema if exists target cascade;
 
 select * from alterations('desired', 'target') a;
 
