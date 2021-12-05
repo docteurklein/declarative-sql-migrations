@@ -1,28 +1,46 @@
 \set ON_ERROR_STOP on
 
-set search_path to pgdiff, public;
+\i src/main.sql
 
+create extension if not exists plpgsql_check cascade;
 
-\i diff.sql
-\i src/throws.sql
-\i src/time.sql
+set search_path to pgdiff, pgdiff_test, public;
 
-create extension plpgsql_check;
-
-create procedure assert_equals(expected text, actual text, context text default '')
-language plpgsql as $$
-begin
-    assert expected = actual;
-exception when assert_failure then
-    raise notice 'expected %, got % (%)', expected, actual, context;
-    raise;
-end;
-$$;
-
-create function _log(e anyelement) returns anyelement
+create or replace function _log(e anyelement) returns anyelement
 language plpgsql strict as $$
 begin
     raise notice '%', e;
     return e;
+end;
+$$;
+
+create or replace function throws(
+    statement text,
+    message_like text default null,
+    sqlstates text[] default '{}'::text[]
+) returns bool
+language plpgsql as $$
+begin
+    execute statement;
+    return false;
+exception when others then
+    raise debug e'"%" throws exception "%: %"', statement, sqlstate, sqlerrm;
+    return
+        (
+            (cardinality(sqlstates) = 0 or array[sqlstate] && sqlstates)
+            and
+            (message_like is null or sqlerrm ilike message_like)
+        )
+    ;
+end;
+$$;
+
+create or replace function timing(statement text) returns interval
+language plpgsql as $$
+declare start timestamp;
+begin
+    start := clock_timestamp();
+    execute statement;
+    return clock_timestamp() - start;
 end;
 $$;

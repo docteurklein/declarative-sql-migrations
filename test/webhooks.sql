@@ -1,5 +1,7 @@
 \i src/webhook.sql
 
+create extension if not exists http;
+
 do $$
 begin
     raise info $it$
@@ -16,14 +18,14 @@ begin
     create table desired.test1 (id int primary key);
     commit;
 
-    insert into desired.test1 values (1);
+    perform pg_logical_emit_message(true, 'wal2json', 'this message will be delivered');
 
     assert 1 = count(*) from pg_logical_slot_peek_changes('test_slot', null, null);
 
     call webhook(
         'test_slot',
-        -- 'http://httpbin.org/post',
-        'http://0:8080/post',
+        'http://httpbin.org/post',
+        -- 'http://0:8080/post',
         polls => 3,
         tables_like => array['desired.%']
     );

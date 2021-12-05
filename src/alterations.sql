@@ -1,4 +1,6 @@
-create function alterations(
+set local search_path to pgdiff;
+
+create or replace function alterations(
     desired text,
     target text,
     cascade bool default false

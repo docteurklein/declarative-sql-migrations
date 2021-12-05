@@ -1,4 +1,6 @@
-create procedure migrate(
+set local search_path to pgdiff;
+
+create or replace procedure migrate(
     desired text,
     target text,
     dry_run bool default true,

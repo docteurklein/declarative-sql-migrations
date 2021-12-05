@@ -5,8 +5,8 @@ begin
     it retries if lock_not_available
     $it$;
 
-    drop extension if exists dblink;
-    create extension dblink;
+    drop extension if exists dblink cascade;
+    create extension dblink cascade;
 
     drop schema if exists desired cascade;
     drop schema if exists target cascade;

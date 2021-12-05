@@ -1,10 +1,6 @@
-begin;
+set local search_path to pgdiff;
 
-drop schema if exists pgdiff cascade;
-create schema pgdiff;
-
-set search_path to pgdiff;
-
+drop type if exists ddl_type cascade;
 create type ddl_type as enum (
     'create schema',
     'create table',
@@ -22,8 +18,8 @@ create type ddl_type as enum (
     'drop table',
     'drop column'
 );
-create cast (text as ddl_type) with inout as implicit;
 
+drop type if exists _alteration cascade;
 create type _alteration as (
     "order" int, -- smaller number means higher priority
     type ddl_type,
@@ -31,6 +27,7 @@ create type _alteration as (
     details jsonb
 );
 
+drop domain if exists alteration cascade;
 create domain alteration as _alteration
 constraint valid check (
 value is null or (
@@ -106,9 +103,3 @@ and case (value).type
         (value).details ? 'column_name'
     else false
 end));
-
-\i src/alterations.sql
-\i src/exec.sql
-\i src/migrate.sql
-
-commit;

@@ -51,7 +51,7 @@ procedure migrate(
 ## how?
 
 ```shell
-psql -q -f desired.sql -f diff.sql -c "call migrate('desired', 'target',
+psql -q -f example/desired.sql -f src/main.sql -c "call migrate('desired', 'target',
     dry_run => true
 )"
 ```
@@ -59,7 +59,7 @@ psql -q -f desired.sql -f diff.sql -c "call migrate('desired', 'target',
 ## run tests
 
 ```shell
-psql -v ON_ERROR_STOP=1 -f test_init.sql $(find test -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
+psql -q -f test_init.sql $(find test -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
 ```
 
 ## example 
@@ -120,4 +120,15 @@ call migrate('desired', 'target',
 select * from alterations('desired', 'target') a;
 
 -- done!
+```
+
+## hacking
+
+
+## live reload
+
+```
+inotifywait -e create -e close_write -m -r --format='%w%f' \
+    src test* \
+    | xargs -I{} psql --single-transaction -f {}
 ```

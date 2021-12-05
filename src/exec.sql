@@ -1,4 +1,4 @@
-create procedure exec(
+create or replace procedure exec(
     statement text,
     lock_timeout text default '50ms',
     max_attempts int default 30,
@@ -11,7 +11,7 @@ declare
     delay_ms bigint = null;
     completed bool = false;
     begin
-        perform set_config('lock_timeout', lock_timeout, false);
+        perform set_config('lock_timeout', lock_timeout, true);
         for i in 1..max_attempts - 1 loop
             begin
                 raise notice 'executing "%"', statement;
