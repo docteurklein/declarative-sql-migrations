@@ -355,12 +355,19 @@ routine_to_drop as (
         and not exists (
             select from pg_proc
             where pronamespace = desired::regnamespace::oid
-            and proname = tp.proname
+            and (
+                proname, prokind, prosecdef, proleakproof, proisstrict,
+                proretset, provolatile, proparallel, pronargs, pronargdefaults,
+                proargmodes, proargnames, prosrc, probin, proconfig
+            ) = (
+                tp.proname, tp.prokind, tp.prosecdef, tp.proleakproof, tp.proisstrict,
+                tp.proretset, tp.provolatile, tp.proparallel, tp.pronargs, tp.pronargdefaults,
+                tp.proargmodes, tp.proargnames, tp.prosrc, tp.probin, tp.proconfig
+            )
         )
     )
     select 7, 'drop routine'::ddl_type,
-    format('drop routine %I.%I %s%s', target, proname,
-        case when argdef = '' then '()' else argdef end,
+    format('drop routine %I.%I (%s)%s', target, proname, argdef,
         case cascade when true then ' cascade' else '' end
     ),
     jsonb_build_object(
@@ -380,7 +387,7 @@ routine_to_create as (
             and proname = dp.proname
         )
     )
-    select 2, 'create routine'::ddl_type,
+    select 8, 'create routine'::ddl_type,
     replace(ddl, desired || '.', target || '.'), -- bad
     jsonb_build_object(
         'schema_name', target,

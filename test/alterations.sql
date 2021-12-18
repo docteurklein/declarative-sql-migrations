@@ -29,7 +29,7 @@ begin
             )
         ),
         (
-            2, 'create routine'::ddl_type,
+            8, 'create routine'::ddl_type,
             $ddl$CREATE OR REPLACE FUNCTION target.f1()
  RETURNS integer
  LANGUAGE sql
@@ -49,7 +49,12 @@ $ddl$,
     create schema target;
     create table target.test1 (id int);
     create index idx on target.test1 (id);
-    create function target.f1 () returns int language sql immutable parallel safe as 'select 1';
+
+    create function target.f1 (b int) returns bool language sql immutable parallel safe as 'select false';
+    create function target.f2 (a bool) returns int language sql immutable parallel safe as 'select 1';
+
+    create function desired.f1 (a int) returns int language sql immutable parallel safe as 'select 1';
+    create function desired.f3 (a bool) returns int language sql immutable parallel safe as 'select 1';
 
     assert count(_log(a)) = 0
         from (
@@ -74,10 +79,44 @@ $ddl$,
         ),
         (
             7, 'drop routine'::ddl_type,
-            'drop routine target.f1 () cascade',
+            'drop routine target.f1 (b integer) cascade',
             jsonb_build_object(
                 'schema_name', 'target',
                 'routine_name', 'f1'
+            )
+        ),
+        (
+            7, 'drop routine'::ddl_type,
+            'drop routine target.f2 (a boolean) cascade',
+            jsonb_build_object(
+                'schema_name', 'target',
+                'routine_name', 'f2'
+            )
+        ),
+        (
+            8, 'create routine'::ddl_type,
+            $ddl$CREATE OR REPLACE FUNCTION target.f1(a integer)
+ RETURNS integer
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+AS $function$select false$function$
+$ddl$,
+            jsonb_build_object(
+                'schema_name', 'target',
+                'routine_name', 'f1'
+            )
+        ),
+        (
+            8, 'create routine'::ddl_type,
+            $ddl$CREATE OR REPLACE FUNCTION target.f3(a boolean)
+ RETURNS integer
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+AS $function$select 1$function$
+$ddl$,
+            jsonb_build_object(
+                'schema_name', 'target',
+                'routine_name', 'f3'
             )
         )) a
     ;
