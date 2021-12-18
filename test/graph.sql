@@ -58,10 +58,10 @@ begin
     raise notice '%', r;
 
     create or replace function edge(
-        v record,
-        t text,
-        via text default null
-    ) returns table (_ text)
+        from record,
+        label text,
+        to record
+    ) returns table (_ record)
     language plpgsql strict parallel restricted
     set search_path to pgdiff
     as $s$
@@ -71,8 +71,9 @@ begin
     $s$;
 
     select *
-    from actor
-    join edge(actor, 'film', via => 'film_actor') on true
+    from director d
+    join film f using (director_name)
+    join actor b on edge(b, 'played_in', f)
     where actor_name = 'actor#1'
 
     into r;

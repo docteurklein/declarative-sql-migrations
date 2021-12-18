@@ -1,3 +1,5 @@
+\set ON_ERROR_STOP on
+
 begin;
 
 drop schema if exists pgdiff cascade;

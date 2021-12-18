@@ -16,7 +16,9 @@ create type ddl_type as enum (
     'create index',
     'drop index',
     'drop table',
-    'drop column'
+    'drop column',
+    'create routine',
+    'drop routine'
 );
 
 drop type if exists _alteration cascade;
@@ -101,5 +103,11 @@ and case (value).type
         (value).details ? 'schema_name' and
         (value).details ? 'table_name' and
         (value).details ? 'column_name'
+    when 'create routine' then
+        (value).details ? 'schema_name' and
+        (value).details ? 'routine_name'
+    when 'drop routine' then
+        (value).details ? 'schema_name' and
+        (value).details ? 'routine_name'
     else false
 end));

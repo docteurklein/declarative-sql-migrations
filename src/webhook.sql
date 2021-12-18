@@ -1,6 +1,4 @@
-set local search_path to pgdiff;
-
-create or replace procedure webhook(
+create or replace procedure pgdiff.webhook(
     slot text, -- an exising locgical replication slot with wal2json
     _url text, -- url to push to
     polls int default null, -- number of times to poll before returning

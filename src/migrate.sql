@@ -1,6 +1,4 @@
-set local search_path to pgdiff;
-
-create or replace procedure migrate(
+create or replace procedure pgdiff.migrate(
     desired text,
     target text,
     dry_run bool default true,
