@@ -7,10 +7,10 @@ create extension if not exists plpgsql_check cascade;
 
 set search_path to pgdiff, pgdiff_test, public;
 
-create or replace function _log(e anyelement) returns anyelement
+create or replace function _log(e anyelement, msg text default null) returns anyelement
 language plpgsql strict as $$
 begin
-    raise notice '%', e;
+    raise notice '% %', e, msg;
     return e;
 end;
 $$;

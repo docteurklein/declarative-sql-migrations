@@ -7,7 +7,7 @@ begin
 
     assert (
         with checks as (
-            select _log(c) from plpgsql_check_function_tb('exec(text,text,int,bigint,bigint,text[])') c
+            select _log(c, null) from plpgsql_check_function_tb('exec(text,text,int,bigint,bigint,text[])') c
         )
         select 0 = count(*) from checks
     );

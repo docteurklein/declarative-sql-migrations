@@ -2,7 +2,7 @@ create or replace function pgdiff.alterations(
     desired text,
     target text,
     cascade bool default false
-) returns setof alteration
+) returns setof pgdiff.alteration
 language sql strict stable
 set search_path to pgdiff
 as $$
@@ -351,9 +351,11 @@ routine_to_drop as (
     with extra as (
         select tp.proname, pg_get_function_identity_arguments(tp.oid) argdef
         from pg_proc tp
+        join pg_type trt on trt.oid = prorettype
         where tp.pronamespace = to_regnamespace(target)::oid
         and not exists (
             select from pg_proc
+            join pg_type drt on drt.oid = prorettype
             where pronamespace = desired::regnamespace::oid
             and (
                 proname, prokind, prosecdef, proleakproof, proisstrict,
@@ -364,6 +366,7 @@ routine_to_drop as (
                 tp.proretset, tp.provolatile, tp.proparallel, tp.pronargs, tp.pronargdefaults,
                 tp.proargmodes, tp.proargnames, tp.prosrc, tp.probin, tp.proconfig
             )
+            and drt.typname = trt.typname
         )
     )
     select 7, 'drop routine'::ddl_type,
@@ -380,11 +383,22 @@ routine_to_create as (
     with missing as (
         select dp.proname, pg_get_functiondef(dp.oid) ddl
         from pg_proc dp
+        join pg_type drt on drt.oid = prorettype
         where dp.pronamespace = desired::regnamespace::oid
         and not exists (
             select from pg_proc
+            join pg_type trt on drt.oid = prorettype
             where pronamespace = to_regnamespace(target)::oid
-            and proname = dp.proname
+            and (
+                proname, prokind, prosecdef, proleakproof, proisstrict,
+                proretset, provolatile, proparallel, pronargs, pronargdefaults,
+                proargmodes, proargnames, prosrc, probin, proconfig
+            ) = (
+                dp.proname, dp.prokind, dp.prosecdef, dp.proleakproof, dp.proisstrict,
+                dp.proretset, dp.provolatile, dp.proparallel, dp.pronargs, dp.pronargdefaults,
+                dp.proargmodes, dp.proargnames, dp.prosrc, dp.probin, dp.proconfig
+            )
+            and drt.typname = trt.typname
         )
     )
     select 8, 'create routine'::ddl_type,

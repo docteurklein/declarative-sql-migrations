@@ -11,7 +11,7 @@ begin
     create table desired.test1 ();
     create function desired.f1 () returns int language sql immutable parallel safe as 'select 1';
 
-    assert count(_log(a)) = 0 from
+    assert count(_log(a, null)) = 0 from
         (select * from alterations('desired', 'target')
         except values(
             0, 'create schema'::ddl_type,
@@ -39,84 +39,6 @@ $ddl$,
             jsonb_build_object(
                 'schema_name', 'target',
                 'routine_name', 'f1'
-            )
-        )) a
-    ;
-
-    drop schema if exists desired cascade;
-    drop schema if exists target cascade;
-    create schema desired;
-    create schema target;
-    create table target.test1 (id int);
-    create index idx on target.test1 (id);
-
-    create function target.f1 (b int) returns bool language sql immutable parallel safe as 'select false';
-    create function target.f2 (a bool) returns int language sql immutable parallel safe as 'select 1';
-
-    create function desired.f1 (a int) returns int language sql immutable parallel safe as 'select 1';
-    create function desired.f3 (a bool) returns int language sql immutable parallel safe as 'select 1';
-
-    assert count(_log(a)) = 0
-        from (
-        select * from alterations('desired', 'target', cascade => true)
-        except values(
-            6, 'drop index'::ddl_type,
-            'drop index target.idx',
-            jsonb_build_object(
-                'schema_name', 'target',
-                'index_name', 'idx',
-                'table_name', 'test1'
-            )
-        ),
-        (
-            7, 'drop table'::ddl_type,
-            'drop table target.test1 cascade',
-            jsonb_build_object(
-                'table_name', 'test1',
-                'schema_name', 'target',
-                'cascade', true
-            )
-        ),
-        (
-            7, 'drop routine'::ddl_type,
-            'drop routine target.f1 (b integer) cascade',
-            jsonb_build_object(
-                'schema_name', 'target',
-                'routine_name', 'f1'
-            )
-        ),
-        (
-            7, 'drop routine'::ddl_type,
-            'drop routine target.f2 (a boolean) cascade',
-            jsonb_build_object(
-                'schema_name', 'target',
-                'routine_name', 'f2'
-            )
-        ),
-        (
-            8, 'create routine'::ddl_type,
-            $ddl$CREATE OR REPLACE FUNCTION target.f1(a integer)
- RETURNS integer
- LANGUAGE sql
- IMMUTABLE PARALLEL SAFE
-AS $function$select false$function$
-$ddl$,
-            jsonb_build_object(
-                'schema_name', 'target',
-                'routine_name', 'f1'
-            )
-        ),
-        (
-            8, 'create routine'::ddl_type,
-            $ddl$CREATE OR REPLACE FUNCTION target.f3(a boolean)
- RETURNS integer
- LANGUAGE sql
- IMMUTABLE PARALLEL SAFE
-AS $function$select 1$function$
-$ddl$,
-            jsonb_build_object(
-                'schema_name', 'target',
-                'routine_name', 'f3'
             )
         )) a
     ;
