@@ -51,7 +51,7 @@ procedure migrate(
 ## how?
 
 ```shell
-psql -q -f example/desired.sql -f src/main.sql -c "call migrate('desired', 'target',
+psql -q -f example/desired.sql -f src/main.sql -c "call pgdiff.migrate('desired', 'target',
     dry_run => true
 )"
 ```
@@ -62,7 +62,7 @@ psql -q -f example/desired.sql -f src/main.sql -c "call migrate('desired', 'targ
 psql -q -f src/main.sql -f test_init.sql $(find test -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
 ```
 
-## example 
+## example
 
 ```sql
 set search_path to pgdiff;
@@ -84,7 +84,7 @@ create table desired.test2 (
 
 drop schema if exists target cascade;
 
-select * from alterations('desired', 'target') a;
+select * from pgdiff.alterations('desired', 'target') a;
 
 -- create schema target                                                                                                            │     0 │ create schema              │ {"schema_name": "target"}
 -- create table target.test1 ()                                                                                                    │     1 │ create table               │ {"table_name": "test1", "schema_name": "target"}
@@ -102,22 +102,22 @@ select * from alterations('desired', 'target') a;
 -- CREATE INDEX test1_name ON target.test1 USING btree (name)                                                                      │     6 │ create index               │ {"index_name": "test1_name", "table_name": "desired.test1", "schema_name": "target"}
 
 
-call migrate('desired', 'target',
+call pgdiff.migrate('desired', 'target',
     dry_run => false
 );
 
 alter table desired.test1 add column test text not null default 'ah' check (length(test) > 0);
 
-select * from alterations('desired', 'target') a;
+select * from pgdiff.alterations('desired', 'target') a;
 
 -- alter table target.test1 add column test text not null default 'ah'::text           │     2 │ add column                 │ {"data_type": "text", "table_name": "test1", "column_name": "test", "is_nullable": "NO", "schema_name": "target", "column_default": "'ah'::text"}
 -- alter table target.test1 add constraint test1_test_check CHECK ((length(test) > 0)) │     5 │ alter table add constraint │ {"table_name": "test1", "schema_name": "target", "constraint_name": "test1_test_check"}
 
-call migrate('desired', 'target',
+call pgdiff.migrate('desired', 'target',
     dry_run => false
 );
 
-select * from alterations('desired', 'target') a;
+select * from pgdiff.alterations('desired', 'target') a;
 
 -- done!
 ```

@@ -5,9 +5,12 @@ set plpgsql.extra_errors to 'all';
 
 create extension if not exists plpgsql_check cascade;
 
-set search_path to pgdiff, pgdiff_test, public;
+drop schema if exists pgdiff_test cascade;
+create schema pgdiff_test;
 
-create or replace function _log(e anyelement, msg text default null) returns anyelement
+set search_path to pgdiff_test, pgdiff, public;
+
+create or replace function pgdiff_test._log(e anyelement, msg text default null) returns anyelement
 language plpgsql strict as $$
 begin
     raise notice '% %', e, msg;
@@ -15,7 +18,7 @@ begin
 end;
 $$;
 
-create or replace function throws(
+create or replace function pgdiff_test.throws(
     statement text,
     message_like text default null,
     sqlstates text[] default '{}'::text[]
@@ -36,7 +39,7 @@ exception when others then
 end;
 $$;
 
-create or replace function timing(statement text) returns interval
+create or replace function pgdiff_test.timing(statement text) returns interval
 language plpgsql as $$
 declare start timestamp;
 begin

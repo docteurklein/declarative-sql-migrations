@@ -1,8 +1,17 @@
-set local search_path to pgdiff;
+set search_path to pgdiff;
 
 drop type if exists ddl_type cascade;
 create type ddl_type as enum (
     'create schema',
+    'drop type',
+    'create type',
+    'drop domain',
+    'create domain',
+    'drop routine',
+    'create routine',
+    'drop table',
+    'drop index',
+    'drop column',
     'create table',
     'alter table add column',
     'alter table add constraint',
@@ -13,12 +22,7 @@ create type ddl_type as enum (
     'alter column drop not null',
     'alter column set not null',
     'alter column type',
-    'create index',
-    'drop index',
-    'drop table',
-    'drop column',
-    'create routine',
-    'drop routine'
+    'create index'
 );
 
 drop type if exists _alteration cascade;
@@ -109,5 +113,17 @@ and case (value).type
     when 'drop routine' then
         (value).details ? 'schema_name' and
         (value).details ? 'routine_name'
+    when 'create type' then
+        (value).details ? 'schema_name' and
+        (value).details ? 'type_name'
+    when 'drop type' then
+        (value).details ? 'schema_name' and
+        (value).details ? 'type_name'
+    when 'create domain' then
+        (value).details ? 'schema_name' and
+        (value).details ? 'domain_name'
+    when 'drop domain' then
+        (value).details ? 'schema_name' and
+        (value).details ? 'domain_name'
     else false
 end));

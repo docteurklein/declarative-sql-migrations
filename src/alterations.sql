@@ -4,7 +4,7 @@ create or replace function pgdiff.alterations(
     cascade bool default false
 ) returns setof pgdiff.alteration
 language sql strict stable
-set search_path to pgdiff
+set search_path to pgdiff, pg_catalog
 as $$
 with schema_to_create as (
     select 0, 'create schema'::ddl_type,
@@ -15,6 +15,127 @@ with schema_to_create as (
     from pg_namespace
     where not exists (
         select from pg_namespace where nspname = target
+    )
+),
+type_to_drop as (
+    select 1, 'drop type'::ddl_type,
+    format('drop type %I.%I %s', target, typname,
+        case cascade when true then ' cascade' else '' end
+    ),
+    jsonb_build_object(
+        'schema_name', target,
+        'type_name', typname
+    )
+    from pg_type tt
+    where typnamespace = to_regnamespace(target)::oid
+    and typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
+    and not exists (
+        select from pg_type dt
+        where typnamespace = desired::regnamespace::oid
+        and dt.typname = tt.typname
+        and dt.typtype = tt.typtype
+        and array(
+            select quote_literal(enumlabel) from pg_enum where enumtypid = dt.oid
+            order by enumsortorder
+        ) = array(
+            select quote_literal(enumlabel) from pg_enum where enumtypid = tt.oid
+            order by enumsortorder
+        )
+        and array(
+            select row(attname, format_type(atttypid, a.atttypmod))
+            from pg_attribute a
+            join pg_class c on dt.typrelid = c.oid
+            and a.attrelid = c.oid
+        ) = array(
+            select row(attname, format_type(atttypid, a.atttypmod))
+            from pg_attribute a
+            join pg_class c on tt.typrelid = c.oid
+            and a.attrelid = c.oid
+        )
+    )
+),
+type_to_create as (
+    select 2, 'create type'::ddl_type,
+    format('create type %I.%I as %s', target, typname,
+        case typtype
+            when 'e' then format(E'enum (\n  %s\n)', array_to_string(array(
+                select quote_literal(enumlabel) from pg_enum where enumtypid = dt.oid
+                order by enumsortorder
+            ), E',\n  '))
+            when 'c' then format(E'(\n  %s\n)', array_to_string(array(
+                select format('%I %s', attname::text, format_type(atttypid, a.atttypmod))
+                from pg_attribute a
+                join pg_class c on dt.typrelid = c.oid
+                and a.attrelid = c.oid
+            ), E',\n  '))
+            else ''
+        end
+    ),
+    jsonb_build_object(
+        'schema_name', target,
+        'type_name', typname
+    )
+    from pg_type dt
+    where typnamespace = desired::regnamespace::oid
+    and typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
+    and not exists (
+        select from pg_type tt
+        where typnamespace = to_regnamespace(target)::oid
+        and dt.typname = tt.typname
+        and dt.typtype = tt.typtype
+        and array(
+            select quote_literal(enumlabel) from pg_enum where enumtypid = dt.oid
+            order by enumsortorder
+        ) = array(
+            select quote_literal(enumlabel) from pg_enum where enumtypid = tt.oid
+            order by enumsortorder
+        )
+        and array(
+            select row(attname, format_type(atttypid, a.atttypmod))
+            from pg_attribute a
+            join pg_class c on dt.typrelid = c.oid
+            and a.attrelid = c.oid
+        ) = array(
+            select row(attname, format_type(atttypid, a.atttypmod))
+            from pg_attribute a
+            join pg_class c on tt.typrelid = c.oid
+            and a.attrelid = c.oid
+        )
+    )
+),
+domain_to_drop as (
+    select 1, 'drop domain'::ddl_type,
+    format('drop domain %I.%I', target, typname,
+        case cascade when true then ' cascade' else '' end
+    ),
+    jsonb_build_object(
+        'schema_name', target,
+        'domain_name', typname
+    )
+    from pg_type dt
+    where typnamespace = to_regnamespace(target)::oid
+    and typtype = 'd'
+    and not exists (
+        select from pg_type
+        where typnamespace = desired::regnamespace::oid
+        and typname = dt.typname
+    )
+),
+domain_to_create as (
+    select 3, 'create domain'::ddl_type,
+    format('create domain %I.%I as %I', target, dt.typname, bt.typname),
+    jsonb_build_object(
+        'schema_name', target,
+        'domain_name', dt.typname
+    )
+    from pg_type dt
+    join pg_type bt on dt.typbasetype = bt.oid
+    where dt.typnamespace = desired::regnamespace::oid
+    and dt.typtype = 'd'
+    and not exists (
+        select from pg_type
+        where typnamespace = to_regnamespace(target)::oid
+        and typname = dt.typname
     )
 ),
 table_to_create as (
@@ -33,7 +154,7 @@ table_to_create as (
     )
 ),
 table_to_drop as (
-    select 7, 'drop table'::ddl_type, 
+    select 7, 'drop table'::ddl_type,
     format('drop table %I.%I%s', target, tablename,
         case cascade when true then ' cascade' else '' end
     ),
@@ -228,7 +349,7 @@ constraint_to_create as (
             target,
             relname,
             conname,
-            replace(pg_get_constraintdef(oid), desired || '.', target || '.') -- bad
+            replace(pg_get_constraintdef(oid), format('%I.', desired), format('%I.', target)) -- bad
         ),
         jsonb_build_object(
             'schema_name', target,
@@ -313,7 +434,7 @@ index_to_create as (
         and not di.indisunique
     )
     select 6, 'create index'::ddl_type,
-    replace(pg_get_indexdef(indexrelid), desired || '.', target || '.'), -- bad
+    replace(pg_get_indexdef(indexrelid), format('%I.', desired), format('%I.', target)), -- bad
     jsonb_build_object(
         'schema_name', target,
         'index_name', relname,
@@ -348,69 +469,58 @@ index_to_drop as (
     from extra
 ),
 routine_to_drop as (
-    with extra as (
-        select tp.proname, pg_get_function_identity_arguments(tp.oid) argdef
-        from pg_proc tp
-        join pg_type trt on trt.oid = prorettype
-        where tp.pronamespace = to_regnamespace(target)::oid
-        and not exists (
-            select from pg_proc
-            join pg_type drt on drt.oid = prorettype
-            where pronamespace = desired::regnamespace::oid
-            and (
-                proname, prokind, prosecdef, proleakproof, proisstrict,
-                proretset, provolatile, proparallel, pronargs, pronargdefaults,
-                proargmodes, proargnames, prosrc, probin, proconfig
-            ) = (
-                tp.proname, tp.prokind, tp.prosecdef, tp.proleakproof, tp.proisstrict,
-                tp.proretset, tp.provolatile, tp.proparallel, tp.pronargs, tp.pronargdefaults,
-                tp.proargmodes, tp.proargnames, tp.prosrc, tp.probin, tp.proconfig
-            )
-            and drt.typname = trt.typname
-        )
-    )
     select 7, 'drop routine'::ddl_type,
-    format('drop routine %I.%I (%s)%s', target, proname, argdef,
+    format('drop routine %I.%I (%s)%s', target, proname, pg_get_function_identity_arguments(oid),
         case cascade when true then ' cascade' else '' end
     ),
     jsonb_build_object(
         'schema_name', target,
         'routine_name', proname
     )
-    from extra
+    from pg_proc dp
+    where pronamespace = to_regnamespace(target)::oid
+    and not exists (
+        select from pg_proc
+        where pronamespace = desired::regnamespace::oid
+        and proname = dp.proname
+    )
 ),
 routine_to_create as (
-    with missing as (
-        select dp.proname, pg_get_functiondef(dp.oid) ddl
-        from pg_proc dp
-        join pg_type drt on drt.oid = prorettype
-        where dp.pronamespace = desired::regnamespace::oid
-        and not exists (
-            select from pg_proc
-            join pg_type trt on drt.oid = prorettype
-            where pronamespace = to_regnamespace(target)::oid
-            and (
-                proname, prokind, prosecdef, proleakproof, proisstrict,
-                proretset, provolatile, proparallel, pronargs, pronargdefaults,
-                proargmodes, proargnames, prosrc, probin, proconfig
-            ) = (
-                dp.proname, dp.prokind, dp.prosecdef, dp.proleakproof, dp.proisstrict,
-                dp.proretset, dp.provolatile, dp.proparallel, dp.pronargs, dp.pronargdefaults,
-                dp.proargmodes, dp.proargnames, dp.prosrc, dp.probin, dp.proconfig
-            )
-            and drt.typname = trt.typname
-        )
-    )
     select 8, 'create routine'::ddl_type,
-    replace(ddl, desired || '.', target || '.'), -- bad
+    replace(pg_get_functiondef(oid), format('%I.', desired), format('%I.', target)), -- bad
     jsonb_build_object(
         'schema_name', target,
         'routine_name', proname
     )
-    from missing
+    from pg_proc dp
+    where pronamespace = desired::regnamespace::oid
+    and not exists (
+        select from pg_proc tp
+        where pronamespace = to_regnamespace(target)::oid
+        and (
+            tp.proname, tp.prosrc
+        ) = (
+            dp.proname, dp.prosrc
+        )
+        -- and (
+        --     proname, prokind, prosecdef, proleakproof, proisstrict,
+        --     proretset, provolatile, proparallel, pronargs, pronargdefaults,
+        --     proargmodes, proargnames, prosrc, probin, proconfig
+        -- ) = (
+        --     dp.proname, dp.prokind, dp.prosecdef, dp.proleakproof, dp.proisstrict,
+        --     dp.proretset, dp.provolatile, dp.proparallel, dp.pronargs, dp.pronargdefaults,
+        --     dp.proargmodes, dp.proargnames, dp.prosrc, dp.probin, dp.proconfig
+        -- )
+    )
 )
 select a::alteration from (
     table schema_to_create
+    union table type_to_drop
+    union table type_to_create
+    union table domain_to_drop
+    union table domain_to_create
+    union table routine_to_drop
+    union table routine_to_create
     union table table_to_create
     union table table_to_drop
     union table column_to_add
@@ -425,8 +535,6 @@ select a::alteration from (
     union table constraint_to_drop
     union table index_to_create
     union table index_to_drop
-    union table routine_to_drop
-    union table routine_to_create
-    order by 1
+    order by 1, 2
 ) a
 $$;
