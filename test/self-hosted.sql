@@ -5,11 +5,10 @@ begin
     it self-replicates
     $it$;
 
-    drop schema if exists "pgdiff_self" cascade;
+    drop schema if exists "pgdiff-self" cascade;
 
-    call migrate('pgdiff', 'pgdiff_self', dry_run => false);
-    commit;
+    call migrate('pgdiff', 'pgdiff-self', dry_run => false);
 
-    assert count(*) = 0 from alterations('pgdiff', 'pgdiff_self');
+    assert count(*) = 0 from alterations('pgdiff', 'pgdiff-self');
 end;
 $$;

@@ -25,7 +25,7 @@ begin
         begin
             assert throws($sql2$
                 call exec('select 1/0', max_attempts => 10);
-            $sql2$, message_like => '%attempt 10/10%');
+            $sql2$, message_like => 'division by zero');
         end;
         $do$;
     $sql$) > interval '2 seconds', 'runs for long';

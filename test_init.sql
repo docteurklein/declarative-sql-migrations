@@ -10,7 +10,7 @@ create schema pgdiff_test;
 
 set search_path to pgdiff_test, pgdiff, public;
 
-create or replace function pgdiff_test._log(e anyelement, msg text default null) returns anyelement
+create or replace function pgdiff._log(e anyelement, msg text default null) returns anyelement
 language plpgsql strict as $$
 begin
     raise notice '% %', e, msg;

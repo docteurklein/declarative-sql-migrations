@@ -19,13 +19,13 @@ begin
 
     while coalesce(i <= polls, true) loop
         raise debug 'polling %: %...', slot, i;
-        perform _log(data), _log(public.http((
+        perform _log(data, 'body'), _log(public.http((
             'POST',
             _url,
             array[http_header('accept','application/json')],
             'application/json',
             data
-        )::http_request))
+        )::http_request), 'response')
         from pg_logical_slot_get_changes(
             slot,
             null,

@@ -28,10 +28,12 @@ type_to_drop as (
     )
     from pg_type tt
     where typnamespace = to_regnamespace(target)::oid
+    and typcategory = 'U'
     and typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
     and not exists (
         select from pg_type dt
         where typnamespace = desired::regnamespace::oid
+        and dt.typcategory = 'U'
         and dt.typname = tt.typname
         and dt.typtype = tt.typtype
         and array(
@@ -77,10 +79,12 @@ type_to_create as (
     )
     from pg_type dt
     where typnamespace = desired::regnamespace::oid
+    and typcategory = 'U'
     and typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
     and not exists (
         select from pg_type tt
         where typnamespace = to_regnamespace(target)::oid
+        and tt.typcategory = 'U'
         and dt.typname = tt.typname
         and dt.typtype = tt.typtype
         and array(
@@ -105,37 +109,44 @@ type_to_create as (
 ),
 domain_to_drop as (
     select 1, 'drop domain'::ddl_type,
-    format('drop domain %I.%I', target, typname,
+    format('drop domain %I.%I', target, dt.typname,
         case cascade when true then ' cascade' else '' end
     ),
-    jsonb_build_object(
-        'schema_name', target,
-        'domain_name', typname
-    )
-    from pg_type dt
-    where typnamespace = to_regnamespace(target)::oid
-    and typtype = 'd'
-    and not exists (
-        select from pg_type
-        where typnamespace = desired::regnamespace::oid
-        and typname = dt.typname
-    )
-),
-domain_to_create as (
-    select 3, 'create domain'::ddl_type,
-    format('create domain %I.%I as %I', target, dt.typname, bt.typname),
     jsonb_build_object(
         'schema_name', target,
         'domain_name', dt.typname
     )
     from pg_type dt
     join pg_type bt on dt.typbasetype = bt.oid
-    where dt.typnamespace = desired::regnamespace::oid
+    where dt.typnamespace = to_regnamespace(target)::oid
+    and dt.typcategory = 'U'
     and dt.typtype = 'd'
     and not exists (
         select from pg_type
-        where typnamespace = to_regnamespace(target)::oid
+        where typnamespace = desired::regnamespace::oid
+        and dt.typcategory = 'U'
         and typname = dt.typname
+    )
+),
+domain_to_create as (
+    select 3, 'create domain'::ddl_type,
+    format('create domain %I.%I as %I', target, dt.typname, dbt.typname),
+    jsonb_build_object(
+        'schema_name', target,
+        'domain_name', dt.typname
+    )
+    from pg_type dt
+    join pg_type dbt on dt.typbasetype = dbt.oid
+    where dt.typnamespace = desired::regnamespace::oid
+    and dt.typcategory = 'U'
+    and dt.typtype = 'd'
+    and not exists (
+        select from pg_type tt
+        join pg_type tbt on tt.typbasetype = tbt.oid
+        where tt.typnamespace = to_regnamespace(target)::oid
+        and tt.typcategory = 'U'
+        and tt.typname = dt.typname
+        and dbt.typname = tbt.typname
     )
 ),
 table_to_create as (
@@ -470,19 +481,26 @@ index_to_drop as (
 ),
 routine_to_drop as (
     select 7, 'drop routine'::ddl_type,
-    format('drop routine %I.%I (%s)%s', target, proname, pg_get_function_identity_arguments(oid),
+    format('drop routine %I.%I (%s)%s', target, proname,
+        pg_get_function_identity_arguments(oid),
         case cascade when true then ' cascade' else '' end
     ),
     jsonb_build_object(
         'schema_name', target,
         'routine_name', proname
     )
-    from pg_proc dp
+    from pg_proc tp
     where pronamespace = to_regnamespace(target)::oid
     and not exists (
-        select from pg_proc
+        select from pg_proc dp
         where pronamespace = desired::regnamespace::oid
-        and proname = dp.proname
+        and (
+            tp.proname, tp.prosrc, tp.proisstrict,
+            tp.proretset, tp.provolatile, tp.proparallel, tp.pronargs, tp.pronargdefaults
+        ) = (
+            dp.proname, dp.prosrc, dp.proisstrict,
+            dp.proretset, dp.provolatile, dp.proparallel, dp.pronargs, dp.pronargdefaults
+        )
     )
 ),
 routine_to_create as (
@@ -498,19 +516,12 @@ routine_to_create as (
         select from pg_proc tp
         where pronamespace = to_regnamespace(target)::oid
         and (
-            tp.proname, tp.prosrc
+            tp.proname, tp.prosrc, tp.proisstrict,
+            tp.proretset, tp.provolatile, tp.proparallel, tp.pronargs, tp.pronargdefaults
         ) = (
-            dp.proname, dp.prosrc
+            dp.proname, dp.prosrc, dp.proisstrict,
+            dp.proretset, dp.provolatile, dp.proparallel, dp.pronargs, dp.pronargdefaults
         )
-        -- and (
-        --     proname, prokind, prosecdef, proleakproof, proisstrict,
-        --     proretset, provolatile, proparallel, pronargs, pronargdefaults,
-        --     proargmodes, proargnames, prosrc, probin, proconfig
-        -- ) = (
-        --     dp.proname, dp.prokind, dp.prosecdef, dp.proleakproof, dp.proisstrict,
-        --     dp.proretset, dp.provolatile, dp.proparallel, dp.pronargs, dp.pronargdefaults,
-        --     dp.proargmodes, dp.proargnames, dp.prosrc, dp.probin, dp.proconfig
-        -- )
     )
 )
 select a::alteration from (
