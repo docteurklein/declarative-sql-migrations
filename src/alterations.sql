@@ -28,12 +28,10 @@ type_to_drop as (
     )
     from pg_type tt
     where typnamespace = to_regnamespace(target)::oid
-    and typcategory = 'U'
     and typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
     and not exists (
         select from pg_type dt
         where typnamespace = desired::regnamespace::oid
-        and dt.typcategory = 'U'
         and dt.typname = tt.typname
         and dt.typtype = tt.typtype
         and array(
@@ -79,12 +77,10 @@ type_to_create as (
     )
     from pg_type dt
     where typnamespace = desired::regnamespace::oid
-    and typcategory = 'U'
     and typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
     and not exists (
         select from pg_type tt
         where typnamespace = to_regnamespace(target)::oid
-        and tt.typcategory = 'U'
         and dt.typname = tt.typname
         and dt.typtype = tt.typtype
         and array(
@@ -119,34 +115,48 @@ domain_to_drop as (
     from pg_type dt
     join pg_type bt on dt.typbasetype = bt.oid
     where dt.typnamespace = to_regnamespace(target)::oid
-    and dt.typcategory = 'U'
     and dt.typtype = 'd'
     and not exists (
         select from pg_type
         where typnamespace = desired::regnamespace::oid
-        and dt.typcategory = 'U'
         and typname = dt.typname
     )
 ),
 domain_to_create as (
     select 3, 'create domain'::ddl_type,
-    format('create domain %I.%I as %I', target, dt.typname, dbt.typname),
+    format('create domain %I.%I as %I%s', target, dt.typname, dbt.typname,
+        case when dc.oid is not null
+            then format (E'\n  constraint %I %s',
+            dc.conname,
+            replace(pg_get_constraintdef(dc.oid), format('%I.', desired), format('%I.', target))) -- bad
+            else ''
+        end
+    ),
     jsonb_build_object(
         'schema_name', target,
         'domain_name', dt.typname
     )
     from pg_type dt
+    left join pg_constraint dc
+        on dt.oid = dc.contypid
     join pg_type dbt on dt.typbasetype = dbt.oid
     where dt.typnamespace = desired::regnamespace::oid
-    and dt.typcategory = 'U'
     and dt.typtype = 'd'
     and not exists (
         select from pg_type tt
         join pg_type tbt on tt.typbasetype = tbt.oid
         where tt.typnamespace = to_regnamespace(target)::oid
-        and tt.typcategory = 'U'
         and tt.typname = dt.typname
         and dbt.typname = tbt.typname
+        and array(
+            select replace(pg_get_constraintdef(oid), format('%I.', desired), format('%I.', target)) -- bad
+            from pg_constraint
+            where dt.oid = contypid
+        ) = array(
+            select replace(pg_get_constraintdef(oid), format('%I.', desired), format('%I.', target)) -- bad
+            from pg_constraint
+            where tt.oid = contypid
+        )
     )
 ),
 table_to_create as (
