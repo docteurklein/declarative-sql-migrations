@@ -15,6 +15,7 @@ as $$
 declare
     alteration alteration;
 begin
+    set local check_function_bodies to false; -- bad, dependency problem
     for alteration in
         select * from alterations(desired, target)
         where case when keep_data is true

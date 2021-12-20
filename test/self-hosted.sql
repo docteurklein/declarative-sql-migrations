@@ -11,8 +11,6 @@ begin
 
     assert count(*) = 0 from alterations('pgdiff', 'pgdiff-self');
 
-    call "pgdiff-self".migrate('pgdiff', 'pgdiff-self', dry_run => false);
-
-    assert count(*) = 0 from "pgdiff-self".alterations('pgdiff-self', 'pgdiff');
+    call "pgdiff-self".migrate('pgdiff', 'pgdiff-self', dry_run => true);
 end;
 $$;
