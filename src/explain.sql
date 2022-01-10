@@ -1,10 +1,10 @@
 create or replace function pgdiff.explain_analyze(sql text)
-returns table(path text, value jsonb, depth int)
+returns table(path text, value jsonb, type text, depth int)
 language sql strict volatile
 set search_path to pgdiff
 as $$
-with recursive plans as (
-    select plan::jsonb
+with recursive plan as materialized (
+    select jsonb_array_elements(plans::jsonb) plan
     from query(format('explain (
         analyze,
         verbose,
@@ -15,25 +15,29 @@ with recursive plans as (
         timing,
         summary,
         format json
-    ) %s',
- sql)) _ (plan json)
+    ) %s', sql)) _ (plans json)
 ),
-plan as (
-    select jsonb_array_elements(plan) plan
-    from plans
-),
-flat (path, value, depth) as (
-    select key, value, 0
-    from plan,
-    jsonb_each(plan)
-    where jsonb_typeof(plan) = 'object'
-    union all
-    select concat(f.path, '.', j.key), j.value, depth + 1
-    from flat f,
-    jsonb_each(f.value) j
-    where jsonb_typeof(f.value) = 'object'
+_tree (path, value, type, depth) as (
+    select null, plan, 'object', 0
+    from plan
+    union all (
+        with typed_values as materialized (
+            select path, jsonb_typeof(value) as typeof, value, depth + 1 as depth
+            from _tree
+        )
+        select concat(tv.path, '.', v.key), v.value, jsonb_typeof(v.value), depth
+        from typed_values as tv,
+        lateral jsonb_each(value) v
+        where typeof = 'object'
+            union all
+        select concat(tv.path, '[', n - 1, ']'), v.value, jsonb_typeof(v.value), depth
+        from typed_values as tv,
+        lateral jsonb_array_elements(value) with ordinality as v (value, n)
+        where typeof = 'array'
+    )
 )
-select path, value, depth
-from flat
+select distinct path, value, type, depth
+from _tree
+where path is not null
+order by path
 $$;
-
