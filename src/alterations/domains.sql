@@ -4,7 +4,7 @@ create or replace function pgdiff.altered_domains(
     cascade bool default false
 ) returns setof pgdiff.alteration
 language sql strict stable
-set search_path to pg_catalog
+set search_path to pgdiff, pg_catalog
 as $$
 with domain_to_drop as (
     select 1, 'drop domain',
@@ -64,7 +64,7 @@ domain_to_create as (
         )
     )
 )
-select a::pgdiff.alteration from (
+select a::alteration from (
     table domain_to_drop
     union table domain_to_create
     order by 1, 2

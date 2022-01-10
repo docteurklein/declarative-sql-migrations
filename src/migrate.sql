@@ -17,7 +17,7 @@ declare
 begin
     set local check_function_bodies to false; -- bad, dependency problem
     for alteration in
-        select * from alterations(desired, target)
+        select * from alterations(desired, target, cascade => true)
         where case when keep_data is true
             then type not in ('drop table', 'drop column')
             else true

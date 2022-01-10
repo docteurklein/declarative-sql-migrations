@@ -1,10 +1,10 @@
-create or replace function pgdiff.alterations(
+create or replace function pgdiff.altered_indices(
     desired text,
     target text,
     cascade bool default false
 ) returns setof pgdiff.alteration
 language sql strict stable
-set search_path to pg_catalog
+set search_path to pgdiff, pg_catalog
 as $$
 with index_to_create as (
     with missing as (
@@ -55,7 +55,7 @@ index_to_drop as (
     )
     from extra
 )
-select a::pgdiff.alteration from (
+select a::alteration from (
     table index_to_create
     union table index_to_drop
     order by 1, 2

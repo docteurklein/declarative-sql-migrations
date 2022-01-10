@@ -12,6 +12,7 @@ create schema pgdiff;
 \i src/alterations/routines.sql
 \i src/alterations/tables.sql
 \i src/alterations/types.sql
+\i src/alterations/indices.sql
 \i src/alterations.sql
 \i src/exec.sql
 \i src/migrate.sql

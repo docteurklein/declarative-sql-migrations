@@ -4,7 +4,7 @@ create or replace function pgdiff.altered_tables(
     cascade bool default false
 ) returns setof pgdiff.alteration
 language sql strict stable
-set search_path to pg_catalog
+set search_path to pgdiff, pg_catalog
 as $$
 with table_to_create as (
     select 1, 'create table',
@@ -39,7 +39,7 @@ table_to_drop as (
         and tablename = dt.tablename
     )
 )
-select a::pgdiff.alteration from (
+select a::alteration from (
     table table_to_create
     union table table_to_drop
     order by 1, 2

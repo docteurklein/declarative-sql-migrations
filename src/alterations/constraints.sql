@@ -4,7 +4,7 @@ create or replace function pgdiff.altered_constraints(
     cascade bool default false
 ) returns setof pgdiff.alteration
 language sql strict stable
-set search_path to pg_catalog
+set search_path to pgdiff, pg_catalog
 as $$
 with constraint_to_create as (
     with missing as (
@@ -95,7 +95,7 @@ constraint_to_drop as (
         'table_name', relname
     ) from extra
 )
-select a::pgdiff.alteration from (
+select a::alteration from (
     table constraint_to_create
     union table constraint_to_alter
     union table constraint_to_drop

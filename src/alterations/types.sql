@@ -4,7 +4,7 @@ create or replace function pgdiff.altered_types(
     cascade bool default false
 ) returns setof pgdiff.alteration
 language sql strict stable
-set search_path to pg_catalog
+set search_path to pgdiff, pg_catalog
 as $$
 with type_to_drop as (
     select 1, 'drop type',
@@ -98,7 +98,7 @@ type_to_create as (
         )
     )
 )
-select a::pgdiff.alteration from (
+select a::alteration from (
     table type_to_drop
     union table type_to_create
     order by 1, 2

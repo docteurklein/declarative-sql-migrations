@@ -4,7 +4,7 @@ create or replace function pgdiff.altered_columns(
     cascade bool default false
 ) returns setof pgdiff.alteration
 language sql strict stable
-set search_path to pg_catalog
+set search_path to pgdiff, pg_catalog
 as $$
 with column_to_add as (
     with missing as (
@@ -183,7 +183,7 @@ column_to_set_type as (
     from column_to_alter
     where type_changed
 )
-select a::pgdiff.alteration from (
+select a::alteration from (
     table column_to_add
     union table column_to_drop
     union table column_to_set_default

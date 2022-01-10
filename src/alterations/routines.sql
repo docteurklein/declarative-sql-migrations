@@ -4,11 +4,11 @@ create or replace function pgdiff.altered_routines(
     cascade bool default false
 ) returns setof pgdiff.alteration
 language sql strict stable
-set search_path to pg_catalog
+set search_path to pgdiff, pg_catalog
 as $$
 with routine_to_drop as (
     select 7, 'drop routine',
-    format('drop routine %I.%I (%s)%s', target, proname,
+    format('drop routine if exists %I.%I (%s)%s', target, proname,
         pg_get_function_identity_arguments(oid),
         case cascade when true then ' cascade' else '' end
     ),
@@ -25,14 +25,14 @@ with routine_to_drop as (
             tp.proname, tp.prosrc, tp.proisstrict,
             tp.proretset, tp.provolatile, tp.proparallel, tp.pronargs, tp.pronargdefaults
         ) = (
-            dp.proname, replace(dp.prosrc, format('%I', desired), format('%I', target)), dp.proisstrict,
+            dp.proname, replace(dp.prosrc, format('%I.', desired), format('%I.', target)), dp.proisstrict,
             dp.proretset, dp.provolatile, dp.proparallel, dp.pronargs, dp.pronargdefaults
         )
     )
 ),
 routine_to_create as (
     select 8, 'create routine',
-    replace(pg_get_functiondef(oid), format('%I', desired), format('%I', target)), -- bad
+    replace(pg_get_functiondef(oid), format('%I.', desired), format('%I.', target)), -- bad
     jsonb_build_object(
         'schema_name', target,
         'routine_name', proname
@@ -46,12 +46,12 @@ routine_to_create as (
             tp.proname, tp.prosrc, tp.proisstrict,
             tp.proretset, tp.provolatile, tp.proparallel, tp.pronargs, tp.pronargdefaults
         ) = (
-            dp.proname, replace(dp.prosrc, format('%I', desired), format('%I', target)), dp.proisstrict,
+            dp.proname, replace(dp.prosrc, format('%I.', desired), format('%I.', target)), dp.proisstrict,
             dp.proretset, dp.provolatile, dp.proparallel, dp.pronargs, dp.pronargdefaults
         )
     )
 )
-select a::pgdiff.alteration from (
+select a::alteration from (
     table routine_to_drop
     union table routine_to_create
     order by 1, 2
