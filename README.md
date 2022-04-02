@@ -132,3 +132,26 @@ inotifywait -e create -e close_write -m -r --format='%w%f' \
     src test* \
     | xargs -I{} psql --single-transaction -f {}
 ```
+
+
+## validate records
+
+```
+create table test1 (
+    id int not null,
+    content text not null check (length(content) > 0),
+    age int check (age > 18),
+    work int not null,
+    check ((age >= 18 and work < 2 ) or (age < 18 and work > 2))
+);
+
+
+select * from pgdiff.violations('{"content": "a"}'::jsonb, 'test1'::regclass::oid) v ;
+   col   |        name         |                                  def                                  | status
+---------+---------------------+-----------------------------------------------------------------------+---------
+ content | test1_content_check | CHECK ((length(content) > 0))                                         | valid
+ work    | test1_check         | CHECK ((((age >= 18) AND (work < 2)) OR ((age < 18) AND (work > 2)))) | null
+ age     | test1_age_check     | CHECK ((age > 18))                                                    | invalid
+ age     | test1_check         | CHECK ((((age >= 18) AND (work < 2)) OR ((age < 18) AND (work > 2)))) | invalid
+ id      |                     |                                                                       | null
+```
