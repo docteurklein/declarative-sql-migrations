@@ -3,7 +3,7 @@
 set plpgsql.extra_warnings to 'all';
 set plpgsql.extra_errors to 'all';
 
-create extension if not exists plpgsql_check cascade;
+-- create extension if not exists plpgsql_check cascade;
 
 drop schema if exists pgdiff_test cascade;
 create schema pgdiff_test;
