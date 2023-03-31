@@ -2,7 +2,7 @@ services:
   postgres:
     image: nixery.dev/shell/less/sudo/shadow/postgresql_14/postgresql14packages.plpgsql_check
     entrypoint: sh /app/docker/entrypoint.sh
-    command: psql -U app app
+    command: sh -c 'while true; do sleep 1; done'
     working_dir: /app
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust

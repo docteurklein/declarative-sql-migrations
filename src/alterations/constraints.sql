@@ -20,7 +20,7 @@ with constraint_to_create as (
     )
     select
         case contype when 'p' then 4 else 5 end, -- primary key first
-        'alter table add constraint',
+        'add constraint',
         format('alter table %I.%I add constraint %s %s',
             target,
             relname,
@@ -51,7 +51,7 @@ constraint_to_alter as (
         and dc.contype in ('f') -- only fkeys are supported in postgres
         and dc.connamespace = desired::regnamespace
     )
-    select 5, 'alter table alter constraint', format(
+    select 5, 'alter constraint', format(
         'alter table %I.%I alter constraint %s %s %s',
         target,
         relname,
@@ -84,7 +84,7 @@ constraint_to_drop as (
         and dc.contype in ('f', 'p', 'c', 'u')
         and dc.connamespace = to_regnamespace(target)
     )
-    select 4, 'alter table drop constraint',
+    select 4, 'drop constraint',
     format('alter table %I.%I drop constraint %s',
         target,
         relname,
@@ -97,8 +97,8 @@ constraint_to_drop as (
 )
 select a::alteration from (
     table constraint_to_create
-    union table constraint_to_alter
-    union table constraint_to_drop
+    union all table constraint_to_alter
+    union all table constraint_to_drop
     order by 1, 2
 ) a
 $$;

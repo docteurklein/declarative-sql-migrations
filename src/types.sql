@@ -11,12 +11,14 @@ create type ddl_type as enum (
     'create routine',
     'drop table',
     'drop index',
-    'drop column',
     'create table',
-    'alter table add column',
-    'alter table add constraint',
-    'alter table alter constraint',
-    'alter table drop constraint',
+    'rename table',
+    'rename column',
+    'drop column',
+    'add column',
+    'add constraint',
+    'alter constraint',
+    'drop constraint',
     'alter column set default',
     'alter column drop default',
     'alter column drop not null',
@@ -45,24 +47,24 @@ and case (value).type
     when 'create table' then
         (value).details ? 'schema_name' and
         (value).details ? 'table_name'
-    when 'alter table add column' then
+    when 'add column' then
         (value).details ? 'schema_name' and
         (value).details ? 'table_name' and
         (value).details ? 'column_name' and
         (value).details ? 'is_nullable' and
         (value).details ? 'column_default' and
         (value).details ? 'data_type'
-    when 'alter table add constraint' then
+    when 'add constraint' then
         (value).details ? 'schema_name' and
         (value).details ? 'table_name' and
         (value).details ? 'constraint_name'
-    when 'alter table alter constraint' then
+    when 'alter constraint' then
         (value).details ? 'schema_name' and
         (value).details ? 'table_name' and
         (value).details ? 'constraint_name' and
         (value).details ? 'deferrable' and
         (value).details ? 'deferred'
-    when 'alter table drop constraint' then
+    when 'drop constraint' then
         (value).details ? 'schema_name' and
         (value).details ? 'table_name' and
         (value).details ? 'constraint_name'

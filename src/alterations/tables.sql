@@ -41,7 +41,7 @@ table_to_drop as (
 )
 select a::alteration from (
     table table_to_create
-    union table table_to_drop
+    union all table table_to_drop
     order by 1, 2
 ) a
 $$;

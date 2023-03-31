@@ -100,7 +100,7 @@ type_to_create as (
 )
 select a::alteration from (
     table type_to_drop
-    union table type_to_create
+    union all table type_to_create
     order by 1, 2
 ) a
 $$;

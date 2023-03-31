@@ -66,7 +66,7 @@ domain_to_create as (
 )
 select a::alteration from (
     table domain_to_drop
-    union table domain_to_create
+    union all table domain_to_create
     order by 1, 2
 ) a
 $$;

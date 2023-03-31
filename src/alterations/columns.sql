@@ -16,7 +16,7 @@ with column_to_add as (
         from information_schema.columns
         where table_schema = target
     )
-    select 2, 'alter table add column', format(
+    select 2, 'add column', format(
         'alter table %I.%I add column %I %s %s %s',
         target,
         table_name,
@@ -44,16 +44,7 @@ with column_to_add as (
     order by table_name, ordinal_position asc
 ),
 table_to_drop as (
-    select 7, 'drop table',
-    format('drop table %I.%I%s', target, tablename,
-        case cascade when true then ' cascade' else '' end
-    ),
-    jsonb_build_object(
-        'schema_name', target,
-        'table_name', tablename,
-        'cascade', cascade
-    )
-    from pg_tables dt
+    select from pg_tables dt
     where schemaname = target
     and not exists (
         select from pg_tables
@@ -185,12 +176,12 @@ column_to_set_type as (
 )
 select a::alteration from (
     table column_to_add
-    union table column_to_drop
-    union table column_to_set_default
-    union table column_to_drop_default
-    union table column_to_drop_not_null
-    union table column_to_set_not_null
-    union table column_to_set_type
+    union all table column_to_drop
+    union all table column_to_set_default
+    union all table column_to_drop_default
+    union all table column_to_drop_not_null
+    union all table column_to_set_not_null
+    union all table column_to_set_type
     order by 1, 2
 ) a
 $$;

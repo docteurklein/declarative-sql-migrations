@@ -57,7 +57,7 @@ index_to_drop as (
 )
 select a::alteration from (
     table index_to_create
-    union table index_to_drop
+    union all table index_to_drop
     order by 1, 2
 ) a
 $$;

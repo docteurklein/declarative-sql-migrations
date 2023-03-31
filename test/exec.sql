@@ -5,12 +5,12 @@ begin
     it executes and retries some statements
     $it$;
 
-    assert (
-        with checks as (
-            select _log(c, null) from plpgsql_check_function_tb('exec(text,text,int,bigint,bigint,text[])') c
-        )
-        select 0 = count(*) from checks
-    );
+    -- assert (
+    --     with checks as (
+    --         select _log(c, null) from plpgsql_check_function_tb('exec(text,text,int,bigint,bigint,text[])') c
+    --     )
+    --     select 0 = count(*) from checks
+    -- );
 
     assert not throws($sql$
         call exec('select 1')

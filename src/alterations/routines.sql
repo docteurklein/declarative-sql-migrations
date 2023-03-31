@@ -53,7 +53,7 @@ routine_to_create as (
 )
 select a::alteration from (
     table routine_to_drop
-    union table routine_to_create
+    union all table routine_to_create
     order by 1, 2
 ) a
 $$;

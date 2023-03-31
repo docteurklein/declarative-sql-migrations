@@ -15,7 +15,7 @@ type alteration as (
     details jsonb
 );
 
--- execute or retires (expentional backoff with jitter) any statement that throws any of sqlstates
+-- execute or retries (expentional backoff with jitter) any statement that throws any of sqlstates
 procedure exec(
     ddl text,
     lock_timeout text = '50ms',

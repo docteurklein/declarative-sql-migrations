@@ -16,7 +16,7 @@ begin
         from alterations('desired', 'target') actual
         full outer join (values(
             7, 'drop routine'::ddl_type,
-            'drop routine target.f1 ()',
+            'drop routine if exists target.f1 ()',
             jsonb_build_object(
                 'schema_name', 'target',
                 'routine_name', 'f1'

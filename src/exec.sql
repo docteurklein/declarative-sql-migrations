@@ -9,28 +9,27 @@ create or replace procedure exec(
 language plpgsql as $$
 declare
     delay_ms bigint = null;
+begin
+perform set_config('lock_timeout', lock_timeout, true);
+for i in 1..max_attempts loop
     begin
-        perform set_config('lock_timeout', lock_timeout, true);
-        for i in 1..max_attempts loop
-            begin
-                raise notice 'executing "%"', statement;
-                execute statement;
-                exit;
-            exception when others then
-                if (select cardinality(sqlstates) = 0 or array[sqlstate] && sqlstates) then
-                    delay_ms := round(random() * least(cap_ms, base_ms * 2 ^ i));
+	raise notice 'executing "%"', statement;
+	execute statement;
+    exception when others then
+	if (select cardinality(sqlstates) = 0 or array[sqlstate] && sqlstates) then
+	    delay_ms := round(random() * least(cap_ms, base_ms * 2 ^ i));
 
-                    if i = max_attempts then
-                        raise;
-                    end if;
+	    if i = max_attempts then
+		raise;
+	    end if;
 
-                    raise warning e'attempt %/% for statement "%" throws exception "%: %"\nsleeping %ms', i, max_attempts, statement, sqlstate, sqlerrm, delay_ms;
+	    raise warning e'attempt %/% for statement "%" throws exception "%: %"\nsleeping %ms', i, max_attempts, statement, sqlstate, sqlerrm, delay_ms;
 
-                    perform pg_sleep(delay_ms::numeric / 1000);
-                else
-                    raise;
-                end if;
-            end;
-        end loop;
+	    perform pg_sleep(delay_ms::numeric / 1000);
+	else
+	    raise;
+	end if;
     end;
+end loop;
+end;
 $$;
