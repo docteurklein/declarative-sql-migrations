@@ -7,7 +7,7 @@ language sql strict stable
 set search_path to pgdiff, pg_catalog
 as $$
 with schema_to_create as (
-    select 0, 'create schema'::ddl_type,
+    select 'create schema'::ddl_type,
     format('create schema %I', target),
     jsonb_build_object(
         'schema_name', target
@@ -16,6 +16,7 @@ with schema_to_create as (
     where not exists (
         select from pg_namespace where nspname = target
     )
+    and nspname = desired
 )
 select a::alteration from (
     table schema_to_create
@@ -26,6 +27,6 @@ select a::alteration from (
     union all select * from altered_routines(desired, target, cascade => cascade)
     union all select * from altered_tables(desired, target, cascade => cascade)
     union all select * from altered_indices(desired, target, cascade => cascade)
-    order by 1, 2
+    order by 1
 ) a
 $$;

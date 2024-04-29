@@ -15,7 +15,7 @@ begin
     assert count(_log(expected, 'expected')) = 0 and count(_log(actual, 'actual')) = 0
         from alterations('desired', 'target') actual
         full outer join (values(
-            7, 'drop routine'::ddl_type,
+            'drop routine'::ddl_type,
             'drop routine if exists target.f1 ()',
             jsonb_build_object(
                 'schema_name', 'target',
@@ -23,7 +23,7 @@ begin
             )
         ),
         (
-            8, 'create routine'::ddl_type,
+            'create routine'::ddl_type,
             $ddl$CREATE OR REPLACE FUNCTION target.f1()
  RETURNS boolean
  LANGUAGE sql
@@ -34,7 +34,7 @@ $ddl$,
                 'schema_name', 'target',
                 'routine_name', 'f1'
             )
-        )) expected ("order", type, ddl, details)
+        )) expected (type, ddl, details)
         on row(actual) = row(expected)
         where actual.ddl is null
         or expected.ddl is null

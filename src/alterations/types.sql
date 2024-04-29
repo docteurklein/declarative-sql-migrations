@@ -7,7 +7,7 @@ language sql strict stable
 set search_path to pgdiff, pg_catalog
 as $$
 with type_to_drop as (
-    select 1, 'drop type',
+    select 'drop type',
     format('drop type %I.%I%s', target, typname,
         case cascade when true then ' cascade' else '' end
     ),
@@ -46,7 +46,7 @@ with type_to_drop as (
     )
 ),
 type_to_create as (
-    select 2, 'create type',
+    select 'create type',
     format('create type %I.%I as %s', target, typname,
         case typtype
             when 'e' then format(E'enum (\n  %s\n)', array_to_string(array(
@@ -101,6 +101,6 @@ type_to_create as (
 select a::alteration from (
     table type_to_drop
     union all table type_to_create
-    order by 1, 2
+    order by 1
 ) a
 $$;

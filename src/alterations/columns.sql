@@ -16,7 +16,7 @@ with column_to_add as (
         from information_schema.columns
         where table_schema = target
     )
-    select 2, 'add column', format(
+    select 'add column', format(
         'alter table %I.%I add column %I %s %s %s',
         target,
         table_name,
@@ -62,7 +62,7 @@ column_to_drop as (
         from information_schema.columns
         where table_schema = desired
     )
-    select 6, 'drop column', format(
+    select 'drop column', format(
         'alter table %I.%I drop column %I',
         target,
         table_name,
@@ -94,7 +94,7 @@ column_to_alter as (
     )
 ),
 column_to_set_default as (
-    select 3, 'alter column set default', format(
+    select 'alter column set default', format(
         'alter table %I.%I alter column %I set default %s',
         target,
         table_name,
@@ -111,7 +111,7 @@ column_to_set_default as (
     and column_default is not null
 ),
 column_to_drop_default as (
-    select 3, 'alter column drop default', format(
+    select 'alter column drop default', format(
         'alter table %I.%I alter column %I drop default',
         target,
         table_name,
@@ -127,7 +127,7 @@ column_to_drop_default as (
     and column_default is null
 ),
 column_to_drop_not_null as (
-    select 3, 'alter column drop not null', format(
+    select 'alter column drop not null', format(
         'alter table %I.%I alter column %I drop not null',
         target,
         table_name,
@@ -143,7 +143,7 @@ column_to_drop_not_null as (
     and is_nullable::bool
 ),
 column_to_set_not_null as (
-    select 3, 'alter column set not null', format(
+    select 'alter column set not null', format(
         'alter table %I.%I alter column %I set not null',
         target,
         table_name,
@@ -159,7 +159,7 @@ column_to_set_not_null as (
     and not is_nullable::bool
 ),
 column_to_set_type as (
-    select 3, 'alter column type', format(
+    select 'alter column type', format(
         'alter table %I.%I alter column %I type %s',
         target,
         table_name,
@@ -182,6 +182,6 @@ select a::alteration from (
     union all table column_to_drop_not_null
     union all table column_to_set_not_null
     union all table column_to_set_type
-    order by 1, 2
+    order by 1
 ) a
 $$;

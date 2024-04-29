@@ -2,34 +2,33 @@ set search_path to pgdiff;
 
 drop type if exists ddl_type cascade;
 create type ddl_type as enum (
-    'create schema',
-    'drop type',
-    'create type',
-    'drop domain',
-    'create domain',
     'drop routine',
-    'create routine',
-    'drop table',
+    'drop constraint',
     'drop index',
-    'create table',
+    'drop column',
+    'drop table',
+    'drop domain',
+    'drop type',
     'rename table',
     'rename column',
-    'drop column',
-    'add column',
-    'add constraint',
-    'alter constraint',
-    'drop constraint',
     'alter column set default',
     'alter column drop default',
     'alter column drop not null',
     'alter column set not null',
     'alter column type',
-    'create index'
+    'alter constraint',
+    'create schema',
+    'create type',
+    'create domain',
+    'create table',
+    'add column',
+    'create routine',
+    'create index',
+    'add constraint'
 );
 
 drop type if exists _alteration cascade;
 create type _alteration as (
-    "order" int, -- smaller number means higher priority
     type ddl_type,
     ddl text,
     details jsonb
@@ -39,8 +38,7 @@ drop domain if exists alteration cascade;
 create domain alteration as _alteration
 constraint valid check (
 value is null or (
-(value)."order" is not null
-and (value).type is not null
+(value).type is not null
 and case (value).type
     when 'create schema' then
         (value).details ? 'schema_name'

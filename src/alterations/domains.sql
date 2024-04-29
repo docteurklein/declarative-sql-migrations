@@ -7,7 +7,7 @@ language sql strict stable
 set search_path to pgdiff, pg_catalog
 as $$
 with domain_to_drop as (
-    select 1, 'drop domain',
+    select 'drop domain',
     format('drop domain %I.%I', target, dt.typname,
         case cascade when true then ' cascade' else '' end
     ),
@@ -26,7 +26,7 @@ with domain_to_drop as (
     )
 ),
 domain_to_create as (
-    select 3, 'create domain',
+    select 'create domain',
     format('create domain %I.%I as %I.%I%s', target, dt.typname, target, dbt.typname,
         case when dc.oid is not null
             then format (E'\nconstraint %I %s',
@@ -67,6 +67,6 @@ domain_to_create as (
 select a::alteration from (
     table domain_to_drop
     union all table domain_to_create
-    order by 1, 2
+    order by 1
 ) a
 $$;

@@ -20,7 +20,7 @@ with index_to_create as (
         and not di.indisprimary
         and not di.indisunique
     )
-    select 6, 'create index',
+    select 'create index',
     pg_get_indexdef(indexrelid),
     jsonb_build_object(
         'schema_name', target,
@@ -44,7 +44,7 @@ index_to_drop as (
         and not ti.indisprimary
         and not ti.indisunique
     )
-    select 6, 'drop index', format(
+    select 'drop index', format(
         'drop index %I.%I',
         target,
         relname
@@ -58,6 +58,6 @@ index_to_drop as (
 select a::alteration from (
     table index_to_create
     union all table index_to_drop
-    order by 1, 2
+    order by 1
 ) a
 $$;

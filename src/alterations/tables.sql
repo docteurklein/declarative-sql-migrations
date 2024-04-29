@@ -7,7 +7,7 @@ language sql strict stable
 set search_path to pgdiff, pg_catalog
 as $$
 with table_to_create as (
-    select 1, 'create table',
+    select 'create table',
     format('create table %I.%I ()', target, tablename),
     jsonb_build_object(
         'schema_name', target,
@@ -22,7 +22,7 @@ with table_to_create as (
     )
 ),
 table_to_drop as (
-    select 7, 'drop table',
+    select 'drop table',
     format('drop table %I.%I%s', target, tablename,
         case cascade when true then ' cascade' else '' end
     ),
@@ -42,6 +42,6 @@ table_to_drop as (
 select a::alteration from (
     table table_to_create
     union all table table_to_drop
-    order by 1, 2
+    order by 1
 ) a
 $$;

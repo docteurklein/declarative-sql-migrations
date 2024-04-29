@@ -11,8 +11,13 @@ begin
     drop schema if exists target cascade;
     create schema desired;
     create schema target;
+
     create table desired.test1 (id int);
     create table target.test1 (id int, name text);
+
+    assert (select count(*) = 2 from information_schema.columns
+        where table_schema = 'target'
+    );
 
     call migrate('desired', 'target', dry_run => false);
 
