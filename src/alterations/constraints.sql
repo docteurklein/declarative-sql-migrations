@@ -24,7 +24,7 @@ with constraint_to_create as (
             target,
             relname,
             conname,
-            pg_get_constraintdef(oid)
+            replace(pg_get_constraintdef(oid), format('%I.', desired), format('%I.', target)) -- bad
         ),
         jsonb_build_object(
             'schema_name', target,
