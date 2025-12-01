@@ -8,7 +8,7 @@ set search_path to pgdiff, pg_catalog
 as $$
 with table_to_create as (
     select 'create table',
-    format('create table %I.%I ()', target, tablename),
+    format('create table %I.%I ();', target, tablename),
     jsonb_build_object(
         'schema_name', target,
         'table_name', tablename

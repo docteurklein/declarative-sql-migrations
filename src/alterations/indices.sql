@@ -21,7 +21,7 @@ with index_to_create as (
         and not di.indisunique
     )
     select 'create index',
-    pg_get_indexdef(indexrelid),
+    replace(pg_get_indexdef(indexrelid), format('%I.', desired), format('%I.', target)) || ';', -- bad
     jsonb_build_object(
         'schema_name', target,
         'index_name', relname,
@@ -45,7 +45,7 @@ index_to_drop as (
         and not ti.indisunique
     )
     select 'drop index', format(
-        'drop index %I.%I',
+        'drop index %I.%I;',
         target,
         relname
     ), jsonb_build_object(

@@ -8,7 +8,7 @@ set search_path to pgdiff, pg_catalog
 as $$
 with routine_to_drop as (
     select 'drop routine',
-    format('drop routine if exists %I.%I (%s)%s', target, proname,
+    format('drop routine if exists %I.%I (%s)%s;', target, proname,
         pg_get_function_identity_arguments(oid),
         case cascade when true then ' cascade' else '' end
     ),
@@ -32,7 +32,7 @@ with routine_to_drop as (
 ),
 routine_to_create as (
     select 'create routine',
-    replace(pg_get_functiondef(oid), format('%I.', desired), format('%I.', target)), -- bad
+    replace(pg_get_functiondef(oid), format('%I.', desired), format('%I.', target)) || ';', -- bad
     jsonb_build_object(
         'schema_name', target,
         'routine_name', proname

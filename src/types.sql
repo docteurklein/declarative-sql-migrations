@@ -11,19 +11,21 @@ create type ddl_type as enum (
     'drop type',
     'rename table',
     'rename column',
-    'alter column set default',
-    'alter column drop default',
-    'alter column drop not null',
-    'alter column set not null',
-    'alter column type',
-    'alter constraint',
     'create schema',
     'create type',
     'create domain',
     'create table',
-    'add column',
     'create routine',
     'create index',
+    'add column',
+    'alter column set default',
+    'alter column drop default',
+    'alter column set expression',
+    'alter column drop expression',
+    'alter column drop not null',
+    'alter column set not null',
+    'alter column type',
+    'alter constraint',
     'add constraint'
 );
 
@@ -76,6 +78,15 @@ and case (value).type
         (value).details ? 'table_name' and
         (value).details ? 'column_name' and
         (value).details ? 'column_default'
+    when 'alter column set expression' then
+        (value).details ? 'schema_name' and
+        (value).details ? 'table_name' and
+        (value).details ? 'column_name' and
+        (value).details ? 'expression'
+    when 'alter column drop expression' then
+        (value).details ? 'schema_name' and
+        (value).details ? 'table_name' and
+        (value).details ? 'column_name'
     when 'alter column drop not null' then
         (value).details ? 'schema_name' and
         (value).details ? 'table_name' and

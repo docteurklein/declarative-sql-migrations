@@ -8,7 +8,7 @@ set search_path to pgdiff, pg_catalog
 as $$
 with type_to_drop as (
     select 'drop type',
-    format('drop type %I.%I%s', target, typname,
+    format('drop type %I.%I%s;', target, typname,
         case cascade when true then ' cascade' else '' end
     ),
     jsonb_build_object(

@@ -20,7 +20,7 @@ with constraint_to_create as (
     )
     select
         'add constraint',
-        format('alter table %I.%I add constraint %s %s',
+        format('alter table %I.%I add constraint %s %s;',
             target,
             relname,
             conname,
@@ -51,7 +51,7 @@ constraint_to_alter as (
         and dc.connamespace = desired::regnamespace
     )
     select 'alter constraint', format(
-        'alter table %I.%I alter constraint %s %s %s',
+        'alter table %I.%I alter constraint %s %s %s;',
         target,
         relname,
         conname,
@@ -84,7 +84,7 @@ constraint_to_drop as (
         and dc.connamespace = to_regnamespace(target)
     )
     select 'drop constraint',
-    format('alter table %I.%I drop constraint %s',
+    format('alter table %I.%I drop constraint %s;',
         target,
         relname,
         conname

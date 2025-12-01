@@ -8,7 +8,7 @@ set search_path to pgdiff, pg_catalog
 as $$
 with domain_to_drop as (
     select 'drop domain',
-    format('drop domain %I.%I', target, dt.typname,
+    format('drop domain %I.%I;', target, dt.typname,
         case cascade when true then ' cascade' else '' end
     ),
     jsonb_build_object(
@@ -27,9 +27,9 @@ with domain_to_drop as (
 ),
 domain_to_create as (
     select 'create domain',
-    format('create domain %I.%I as %I.%I%s', target, dt.typname, target, dbt.typname,
+    format('create domain %I.%I as %I.%I%s;', target, dt.typname, dbt_ns.nspname, dbt.typname,
         case when dc.oid is not null
-            then format (E'\nconstraint %I %s',
+            then format (' constraint %I %s',
                 dc.conname,
                 -- pg_get_constraintdef(dc.oid)
                 replace(pg_get_constraintdef(dc.oid), format('%I.', desired), format('%I.', target)) -- bad
@@ -45,6 +45,7 @@ domain_to_create as (
     left join pg_constraint dc
         on dt.oid = dc.contypid
     join pg_type dbt on dt.typbasetype = dbt.oid
+    join pg_namespace dbt_ns on dbt_ns.oid = dbt.typnamespace
     where dt.typnamespace = desired::regnamespace::oid
     and dt.typtype = 'd'
     and not exists (

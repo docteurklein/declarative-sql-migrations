@@ -8,7 +8,7 @@ set search_path to pgdiff, pg_catalog
 as $$
 with schema_to_create as (
     select 'create schema'::ddl_type,
-    format('create schema %I', target),
+    format('create schema %I;', target),
     jsonb_build_object(
         'schema_name', target
     )
@@ -20,13 +20,13 @@ with schema_to_create as (
 )
 select a::alteration from (
     table schema_to_create
-    union all select * from altered_columns(desired, target, cascade => cascade)
-    union all select * from altered_constraints(desired, target, cascade => cascade)
     union all select * from altered_types(desired, target, cascade => cascade)
     union all select * from altered_domains(desired, target, cascade => cascade)
-    union all select * from altered_routines(desired, target, cascade => cascade)
     union all select * from altered_tables(desired, target, cascade => cascade)
+    union all select * from altered_columns(desired, target, cascade => cascade)
     union all select * from altered_indices(desired, target, cascade => cascade)
-    order by 1
+    union all select * from altered_constraints(desired, target, cascade => cascade)
+    union all select * from altered_routines(desired, target, cascade => cascade)
+    -- order by 1
 ) a
 $$;

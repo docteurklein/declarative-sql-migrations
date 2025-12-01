@@ -5,17 +5,17 @@ begin;
 drop schema if exists pgdiff cascade;
 create schema pgdiff;
 
-\i src/types.sql
-\i src/alterations/columns.sql
-\i src/alterations/constraints.sql
-\i src/alterations/domains.sql
-\i src/alterations/routines.sql
-\i src/alterations/tables.sql
-\i src/alterations/types.sql
-\i src/alterations/indices.sql
-\i src/alterations.sql
-\i src/exec.sql
-\i src/migrate.sql
-\i src/query.sql
+\ir types.sql
+\ir alterations/columns.sql
+\ir alterations/constraints.sql
+\ir alterations/domains.sql
+\ir alterations/routines.sql
+\ir alterations/tables.sql
+\ir alterations/types.sql
+\ir alterations/indices.sql
+\ir alterations.sql
+\ir exec.sql
+\ir migrate.sql
+\ir query.sql
 
 commit;
