@@ -28,6 +28,7 @@ select a::alteration from (
     union all select * from altered_constraints(desired, target, cascade => cascade)
     union all select * from altered_routines(desired, target, cascade => cascade)
     union all select * from altered_triggers(desired, target, cascade => cascade)
+    union all select * from altered_policies(desired, target, cascade => cascade)
     -- order by 1
 ) a
 $$;

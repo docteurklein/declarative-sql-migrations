@@ -36,7 +36,7 @@ with column_to_add as (
         end,
         case when a.attgenerated <> ''
             then format('generated always as (%s) %s',
-                pg_get_expr(adbin, adrelid),
+                pg_get_expr(adbin, adrelid, true),
                 case a.attgenerated when 's' then 'stored' when 'v' then 'virtual' end
             )
             else ''
