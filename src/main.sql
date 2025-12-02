@@ -13,6 +13,7 @@ create schema pgdiff;
 \ir alterations/tables.sql
 \ir alterations/types.sql
 \ir alterations/indices.sql
+\ir alterations/triggers.sql
 \ir alterations.sql
 \ir exec.sql
 \ir migrate.sql
