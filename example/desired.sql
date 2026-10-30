@@ -1,9 +1,9 @@
 begin;
 
-drop schema if exists desired cascade;
-create schema desired;
+drop schema if exists test cascade;
+create schema test;
 
-set local search_path to desired;
+set local search_path to test;
 
 create table test1 (
     test1_id int not null primary key,
