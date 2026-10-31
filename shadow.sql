@@ -220,15 +220,15 @@ index_to_drop as (
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
 ),
-constraint_target (schema, rel, name, def, type) as (
-    select nspname, relname, c.conname, pg_get_constraintdef, contype
+constraint_target (schema, rel, name, def, type, is_deferrable, is_deferred) as (
+    select nspname, relname, c.conname, pg_get_constraintdef, contype, condeferrable, condeferred
     from shadow.pg_constraint_fdw c
     join shadow.pg_class rel on (rel.oid = c.conrelid)
     join schema_target s on (s.oid = c.connamespace)
     where contype not in ('c', 'n')
 ),
-constraint_desired (schema, rel, name, def, type) as (
-    select nspname, relname, c.conname, pg_get_constraintdef(c.oid) collate "C", contype
+constraint_desired (schema, rel, name, def, type, is_deferrable, is_deferred) as (
+    select nspname, relname, c.conname, pg_get_constraintdef(c.oid) collate "C", contype, condeferrable, condeferred
     from pg_catalog.pg_constraint c
     join pg_catalog.pg_class rel on (rel.oid = c.conrelid)
     join schema_desired s on (s.oid = c.connamespace)
@@ -237,7 +237,7 @@ constraint_desired (schema, rel, name, def, type) as (
 constraint_diff as (
     select d, t
     from constraint_desired d
-    natural full outer join constraint_target t
+    full outer join constraint_target t using (schema, rel, name)
     where d is distinct from t
     and not exists (select from schema_to_drop to_d where to_d.schema = d.schema)
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (d.schema, d.rel))
@@ -264,8 +264,6 @@ view_to_drop as (
     where not exists (select from view_desired d where (d.schema, d.rel) = (t.schema, t.rel))
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 )
--- select * from constraint_diff
--- ;
 select format('drop schema %I cascade;', schema)
 from schema_to_drop
 union all
@@ -400,6 +398,13 @@ union all
 select format('alter table %I.%I drop constraint %I;', (t).schema, (t).rel, (t).name)
 from constraint_diff
 where (d).name is null
+union all
+select format('alter table %I.%I alter constraint %I %s%s;', (d).schema, (d).rel, (d).name,
+    case when (d).is_deferrable then 'deferrable' else 'not deferrable' end,
+    case when (d).is_deferred then ' initially deferred' else ' initially immediate' end
+)
+from constraint_diff
+where d <> t -- is distinct from t and (d).name is not null and (t).name is not null
 union all
 select format('create or replace view %I.%I as %s', schema, rel, def)
 from view_to_add

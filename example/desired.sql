@@ -21,7 +21,7 @@ create index test1_name on test1 (name);
 
 create table test2 (
     test2_id int not null primary key,
-    test1_id int not null references test1 (test1_id) deferrable
+    test1_id int not null references test1 (test1_id) deferrable initially deferred
 );
 
 create view v1 as
