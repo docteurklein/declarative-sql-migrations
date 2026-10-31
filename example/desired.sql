@@ -5,8 +5,12 @@ create schema test;
 
 set local search_path to test;
 
+create type ty1 as (id int);
+create type en1 as enum ('ok', 'notok');
+
 create table test1 (
     test1_id int not null primary key,
+    en en1,
     name text unique not null check (trim(name) <> '') default 1,
     price int not null check (price > 0),
     gen int generated always as (1+1) virtual

@@ -11,6 +11,7 @@ create schema shadow;
 
 import foreign schema pg_catalog except (
     pg_attribute, -- anyarray pseudotype error
+    pg_type, -- format_type
     pg_attrdef, -- node_tree error
     pg_replication_slots,
     pg_statistic,
@@ -21,43 +22,19 @@ import foreign schema pg_catalog except (
 from server :target
 into shadow;
 
-create foreign table shadow.pg_attribute (
-    attrelid oid not null,
-    attname name,
-    atttypid oid,
-    attlen smallint,
-    attnum smallint not null,
-    atttypmod integer,
-    attndims smallint,
-    attbyval boolean,
-    attalign "char",
-    attstorage "char",
-    attcompression "char",
-    attnotnull boolean,
-    atthasdef boolean,
-    atthasmissing boolean,
-    attidentity "char",
-    attgenerated "char",
-    attisdropped boolean,
-    attislocal boolean,
-    attinhcount smallint,
-    attcollation oid,
-    attstattarget smallint,
-    attacl aclitem[],
-    attoptions text[],
-    attfdwoptions text[]
-)
-server :target
-options (schema_name 'pg_catalog', table_name 'pg_attribute');
+import foreign schema fdw_friendly_catalog
+from server :target
+into shadow;
 
-create foreign table shadow.pg_attrdef (
-    oid oid not null,
-    adrelid oid not null,
-    adnum smallint not null,
-    expr text collate "C" not null
-)
-server :target
-options (schema_name 'fdw_friendly_catalog', table_name 'pg_attrdef');
+create function shadow.debug(a anyelement) returns anyelement
+language plpgsql
+volatile parallel safe
+as $$
+begin
+    raise notice '% %', a, pg_typeof(a);
+    return a;
+end
+$$;
 
 drop view if exists shadow.alter_ddl cascade;
 create or replace view shadow.alter_ddl (ddl) as
@@ -81,6 +58,33 @@ schema_to_drop (schema) as (
     from schema_target t
     where not exists (select from schema_desired d where d.nspname = t.nspname)
 ),
+type_target (schema, oid, name, def, typtype, typrelid) as (
+    select nspname, t.oid, typname, formatted_type, typtype, typrelid
+    from shadow.pg_type_fdw t
+    join schema_target s on (s.oid = t.typnamespace)
+    left join shadow.pg_class c on typrelid = c.oid
+    where typtype in ('c', 'e')
+    and (relkind = 'c' or relkind is null)
+),
+type_desired (schema, oid, name, def, typtype, typrelid) as (
+    select nspname, t.oid, typname, format_type(t.oid, typtypmod), typtype, typrelid
+    from pg_catalog.pg_type t
+    join schema_desired s on (s.oid = typnamespace)
+    left join pg_catalog.pg_class c on typrelid = c.oid
+    where typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
+    and (relkind = 'c' or relkind is null)
+),
+type_to_add as (
+    select *
+    from type_desired d
+    where not exists (select from type_target t where (t.schema, t.name) = (d.schema, d.name))
+),
+type_to_drop as (
+    select *
+    from type_target t
+    where not exists (select from type_desired d where (t.schema, t.name) = (d.schema, d.name))
+    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+),
 table_target (schema, rel) as (
     select nspname, relname
     from shadow.pg_class c
@@ -90,7 +94,7 @@ table_target (schema, rel) as (
 table_desired (schema, rel) as (
     select nspname, relname
     from pg_catalog.pg_class c
-    join schema_desired n on (n.oid = c.relnamespace)
+    join schema_desired s on (s.oid = c.relnamespace)
     and relkind in ('r')
 ),
 table_to_add (schema, rel) as (
@@ -105,15 +109,17 @@ table_to_drop (schema, rel) as (
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 ),
 attr_target (schema, rel, attname, type, not_null, expr, attgenerated, attidentity) as (
-    select nspname, relname, attname,
-        format_type(atttypid, atttypmod),
+    select s.nspname, relname, attname,
+        formatted_type,
         attnotnull,
         expr,
         attgenerated,
         attidentity
     end
-    from shadow.pg_attribute a
-    left join shadow.pg_attrdef ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
+    from shadow.pg_attribute_fdw a
+    join shadow.pg_type_fdw t on (a.atttypid = t.oid)
+    -- join shadow.pg_namespace tn on (tn.oid = t.typnamespace)
+    left join shadow.pg_attrdef_fdw ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
     join shadow.pg_class c on (c.oid = a.attrelid)
     join schema_target s on (s.oid = c.relnamespace)
     and relkind in ('r')
@@ -121,13 +127,15 @@ attr_target (schema, rel, attname, type, not_null, expr, attgenerated, attidenti
     and not attisdropped
 ),
 attr_desired (schema, rel, attname, type, not_null, expr, attgenerated, attidentity) as (
-    select nspname, relname, attname,
-        format_type(atttypid, atttypmod),
+    select s.nspname, relname, attname,
+        format_type(atttypid, atttypmod) collate "C",
         attnotnull,
         pg_get_expr(adbin, adrelid, true),
         attgenerated,
         attidentity
     from pg_catalog.pg_attribute a
+    -- join pg_catalog.pg_type t on (a.atttypid = t.oid)
+    -- join pg_catalog.pg_namespace tn on (tn.oid = t.typnamespace)
     left join pg_catalog.pg_attrdef ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
     join pg_catalog.pg_class c on (c.oid = a.attrelid)
     join schema_desired s on (s.oid = c.relnamespace)
@@ -191,17 +199,48 @@ view_to_drop as (
     where not exists (select from view_desired d where (d.schema, d.rel) = (t.schema, t.rel))
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 )
-select format('create schema %I;', schema)
-from schema_to_add
-union all
 select format('drop schema %I cascade;', schema)
 from schema_to_drop
 union all
-select format('create table %I.%I ();', schema, rel)
-from table_to_add
+select format('drop view if exists %I.%I cascade;', schema, rel)
+from view_to_drop
+union all
+select format('drop index if exists %I.%I;', schema, rel)
+from index_to_drop
 union all
 select format('drop table %I.%I;', schema, rel)
 from table_to_drop
+union all
+select format('alter table %I.%I drop column %I;', (t).schema, (t).rel, (t).attname)
+from attr_diff
+where (d).attname is null
+union all
+select format('drop type %I.%I;', schema, name)
+from type_to_drop
+union all
+select format('create schema %I;', schema)
+from schema_to_add
+union all
+select format('create type %I.%I as %s;', schema, name::text, case typtype
+    when 'e' then format('enum (%s)', array_to_string(array(
+        select quote_literal(enumlabel)
+        from pg_enum
+        where enumtypid = t.oid
+        order by enumsortorder
+    ), ',  '))
+    when 'c' then format('(%s)', array_to_string(array(
+        select format('%I %s', attname::text, format_type(atttypid, a.atttypmod))
+        from pg_attribute a
+        join pg_class c on typrelid = c.oid
+        join pg_type t on a.atttypid = t.oid
+        and a.attrelid = c.oid
+    ), ',  '))
+    else ''
+end)
+from type_to_add t
+union all
+select format('create table %I.%I ();', schema, rel)
+from table_to_add
 union all
 select format('alter table %I.%I add column %I %s%s%s;',
     schema,
@@ -229,18 +268,29 @@ select format('alter table %I.%I add column %I %s%s%s;',
 )
 from attr_to_add
 union all
-select format('alter table %I.%I drop column %I;', (t).schema, (t).rel, (t).attname)
-from attr_diff
-where (d).attname is null
-union all
 select format('alter table %I.%I alter column %I %s;', (d).schema, (d).rel, (d).attname, action)
 from attr_diff,
 lateral (values
-    (format('type %I', (d).type),              (d).type <> (t).type),
-    (format('set default %s', (d).expr),       (d).expr <> (t).expr and (d).expr <> '' and (d).attgenerated = ''),
-    ('drop default',                           (d).expr <> (t).expr and (d).expr = '' and (d).attgenerated = ''),
-    (format('set expression as %s', (d).expr), (d).expr <> (t).expr and (d).expr <> '' and (d).attgenerated <> ''),
-    ('drop expression',                        (d).expr <> (t).expr and (d).expr = '' and (d).attgenerated <> ''),
+    (
+        format('type %s', (d).type), -- @TODO using <expression>
+        (d).type <> (t).type
+    ),
+    (
+        format('set default %s', (d).expr),
+        (d).expr <> (t).expr and (d).expr <> '' and (d).attgenerated = ''
+    ),
+    (
+        'drop default',
+        (d).expr <> (t).expr and (d).expr = '' and (d).attgenerated = ''
+    ),
+    (
+        format('set expression as %s', (d).expr),
+        (d).expr <> (t).expr and (d).expr <> '' and (d).attgenerated <> ''
+    ),
+    (
+        'drop expression',
+        (d).expr <> (t).expr and (d).expr = '' and (d).attgenerated <> ''
+    ),
     (
         format('add generated %s as identity', case (d).attidentity when 'a' then 'always' when 'd' then 'by default' end),
         (d).attidentity <> (t).attidentity and (t).attidentity = ''
@@ -253,21 +303,21 @@ lateral (values
         'drop identity',
         (d).attidentity <> (t).attidentity and (d).attidentity = ''
     ),
-    ('set not null',                           (d).not_null <> (t).not_null and (d).not_null),
-    ('drop not null',                          (d).not_null <> (t).not_null and not (d).not_null)
+    (
+        'set not null',
+        (d).not_null <> (t).not_null and (d).not_null
+    ),
+    (
+        'drop not null',
+        (d).not_null <> (t).not_null and not (d).not_null
+    )
 ) _ (action, applies)
-where (d).attname is not null
+where d is not null
 and applies
 union all
 select format('%s;', def)
 from index_to_add
 union all
-select format('drop index if exists %I.%I;', schema, rel)
-from index_to_drop
-union all
 select format('create or replace view %I.%I as %s', schema, rel, def)
 from view_to_add
-union all
-select format('drop view if exists %I.%I cascade;', schema, rel)
-from view_to_drop
 ;
