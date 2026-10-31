@@ -13,6 +13,7 @@ import foreign schema pg_catalog except (
     pg_attribute, -- anyarray pseudotype error
     pg_type, -- format_type
     pg_attrdef, -- node_tree error
+    pg_constraint,
     pg_replication_slots,
     pg_statistic,
     pg_statistic_ext_data,
@@ -36,8 +37,8 @@ begin
 end
 $$;
 
--- drop view if exists shadow.alter_ddl cascade;
--- create or replace view shadow.alter_ddl (ddl) as
+drop view if exists shadow.alter_ddl cascade;
+create or replace view shadow.alter_ddl (ddl) as
 with schema_target (oid, nspname) as (
     select oid, nspname
     from shadow.pg_namespace
@@ -86,16 +87,16 @@ type_to_drop as (
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 ),
 domain_target (schema, name, def) as (
-    select nspname, t.typname, format('%s%s;', bt.formatted_type, case when c.oid is not null
+    select nspname, t.typname, format('%s%s;', format_type(bt.oid, t.typtypmod), case when c.oid is not null
         then format (' constraint %I %s',
             c.conname,
-            pg_get_constraintdef(c.oid)
+            pg_get_constraintdef
         )
         else ''
     end)
     from shadow.pg_type_fdw t
     join schema_target s on (s.oid = t.typnamespace)
-    left join shadow.pg_constraint c
+    left join shadow.pg_constraint_fdw c
         on t.oid = c.contypid
     join shadow.pg_type_fdw bt on t.typbasetype = bt.oid
     where t.typtype in ('d')
@@ -122,12 +123,6 @@ domain_diff as (
     where d is distinct from t
     and not exists (select from schema_to_drop to_d where to_d.schema = d.schema)
 ),
--- domain_to_drop as (
---     select *
---     from domain_target t
---     where not exists (select from domain_desired d where (t.schema, t.name) = (d.schema, d.name))
---     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
--- ),
 table_target (schema, rel) as (
     select nspname, relname
     from shadow.pg_class c
@@ -196,14 +191,22 @@ attr_to_alter as (
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (d.schema, d.rel))
 ),
 index_target (schema, rel, index, def) as (
-    select schemaname, tablename, indexname, indexdef
-    from shadow.pg_indexes i
-    join schema_target s on (s.nspname = i.schemaname)
+    select nspname, rel.relname, ic.relname, pg_get_indexdef(ic.oid)
+    from shadow.pg_index i
+    join shadow.pg_class rel on (rel.oid = i.indrelid)
+    join shadow.pg_class ic on (ic.oid = i.indexrelid)
+    join schema_target s on (s.oid = ic.relnamespace)
+    where not indisprimary -- covered by constraint
+    and not indisunique
 ),
 index_desired (schema, rel, index, def) as (
-    select schemaname, tablename, indexname, indexdef
-    from pg_catalog.pg_indexes i
-    join schema_desired s on (s.nspname = i.schemaname)
+    select nspname, rel.relname, ic.relname, pg_get_indexdef(ic.oid)
+    from pg_catalog.pg_index i
+    join pg_class rel on (rel.oid = i.indrelid)
+    join pg_class ic on (ic.oid = i.indexrelid)
+    join schema_desired s on (s.oid = ic.relnamespace)
+    where not indisprimary -- covered by constraint
+    and not indisunique
 ),
 index_to_add as (
     select *
@@ -216,6 +219,29 @@ index_to_drop as (
     where not exists (select from index_desired d where (d.schema, d.rel) = (t.schema, t.rel))
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
+),
+constraint_target (schema, rel, name, def, type) as (
+    select nspname, relname, c.conname, pg_get_constraintdef, contype
+    from shadow.pg_constraint_fdw c
+    join shadow.pg_class rel on (rel.oid = c.conrelid)
+    join schema_target s on (s.oid = c.connamespace)
+    where contype not in ('c', 'n')
+),
+constraint_desired (schema, rel, name, def, type) as (
+    select nspname, relname, c.conname, pg_get_constraintdef(c.oid) collate "C", contype
+    from pg_catalog.pg_constraint c
+    join pg_catalog.pg_class rel on (rel.oid = c.conrelid)
+    join schema_desired s on (s.oid = c.connamespace)
+    where contype not in ('c', 'n')
+),
+constraint_diff as (
+    select d, t
+    from constraint_desired d
+    natural full outer join constraint_target t
+    where d is distinct from t
+    and not exists (select from schema_to_drop to_d where to_d.schema = d.schema)
+    and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (d.schema, d.rel))
+    order by case (d).type when 'p' then 1 when 'u' then 2 end nulls last
 ),
 view_target (schema, rel, def) as (
     select schemaname, viewname, definition
@@ -238,6 +264,8 @@ view_to_drop as (
     where not exists (select from view_desired d where (d.schema, d.rel) = (t.schema, t.rel))
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 )
+-- select * from constraint_diff
+-- ;
 select format('drop schema %I cascade;', schema)
 from schema_to_drop
 union all
@@ -256,8 +284,7 @@ where (d).attname is null
 union all
 select format('drop domain %I.%I;', (t).schema, (t).name)
 from domain_diff
-where (d).def <> (t).def
-or d is not distinct from null
+where (d).name is null and (t).name is not null
 union all
 select format('drop type %I.%I;', schema, name)
 from type_to_drop
@@ -285,8 +312,7 @@ from type_to_add t
 union all
 select format('create domain %I.%I as %s', (d).schema, (d).name, (d).def)
 from domain_diff
-where (d).def <> (t).def
-or t is not distinct from null
+where (d).name is not null
 union all
 select format('create table %I.%I ();', schema, rel)
 from table_to_add
@@ -366,6 +392,14 @@ and applies
 union all
 select format('%s;', def)
 from index_to_add
+union all
+select format('alter table %I.%I add constraint %I %s;', (d).schema, (d).rel, (d).name, (d).def)
+from constraint_diff
+where (t).name is null
+union all
+select format('alter table %I.%I drop constraint %I;', (t).schema, (t).rel, (t).name)
+from constraint_diff
+where (d).name is null
 union all
 select format('create or replace view %I.%I as %s', schema, rel, def)
 from view_to_add

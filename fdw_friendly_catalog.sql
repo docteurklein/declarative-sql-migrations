@@ -15,3 +15,7 @@ from pg_catalog.pg_attrdef;
 create view fdw_friendly_catalog.pg_type_fdw as
 select *, format_type(oid, typtypmod) collate "C" formatted_type
 from pg_catalog.pg_type;
+
+create view fdw_friendly_catalog.pg_constraint_fdw as
+select *, pg_get_constraintdef(oid) collate "C" pg_get_constraintdef
+from pg_catalog.pg_constraint;
