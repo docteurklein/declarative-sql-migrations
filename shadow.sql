@@ -22,7 +22,7 @@ import foreign schema pg_catalog except (
 from server :target
 into shadow;
 
-import foreign schema fdw_friendly_catalog
+import foreign schema fdw_friendly_catalog -- alternatives to excluded above
 from server :target
 into shadow;
 
@@ -36,8 +36,8 @@ begin
 end
 $$;
 
-drop view if exists shadow.alter_ddl cascade;
-create or replace view shadow.alter_ddl (ddl) as
+-- drop view if exists shadow.alter_ddl cascade;
+-- create or replace view shadow.alter_ddl (ddl) as
 with schema_target (oid, nspname) as (
     select oid, nspname
     from shadow.pg_namespace
@@ -58,8 +58,8 @@ schema_to_drop (schema) as (
     from schema_target t
     where not exists (select from schema_desired d where d.nspname = t.nspname)
 ),
-type_target (schema, oid, name, def, typtype, typrelid) as (
-    select nspname, t.oid, typname, formatted_type, typtype, typrelid
+type_target (schema, name, def, typtype, typrelid) as (
+    select nspname, typname, formatted_type, typtype, typrelid
     from shadow.pg_type_fdw t
     join schema_target s on (s.oid = t.typnamespace)
     left join shadow.pg_class c on typrelid = c.oid
@@ -85,6 +85,49 @@ type_to_drop as (
     where not exists (select from type_desired d where (t.schema, t.name) = (d.schema, d.name))
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 ),
+domain_target (schema, name, def) as (
+    select nspname, t.typname, format('%s%s;', bt.formatted_type, case when c.oid is not null
+        then format (' constraint %I %s',
+            c.conname,
+            pg_get_constraintdef(c.oid)
+        )
+        else ''
+    end)
+    from shadow.pg_type_fdw t
+    join schema_target s on (s.oid = t.typnamespace)
+    left join shadow.pg_constraint c
+        on t.oid = c.contypid
+    join shadow.pg_type_fdw bt on t.typbasetype = bt.oid
+    where t.typtype in ('d')
+),
+domain_desired (schema, name, def) as (
+    select nspname, t.typname, format('%s%s;', format_type(bt.oid, t.typtypmod), case when c.oid is not null
+        then format (' constraint %I %s',
+            c.conname,
+            pg_get_constraintdef(c.oid)
+        )
+        else ''
+    end)
+    from pg_catalog.pg_type t
+    join schema_desired s on (s.oid = t.typnamespace)
+    left join pg_catalog.pg_constraint c
+        on t.oid = c.contypid
+    join pg_catalog.pg_type bt on t.typbasetype = bt.oid
+    where t.typtype in ('d')
+),
+domain_diff as (
+    select d, t
+    from domain_desired d
+    natural full outer join domain_target t
+    where d is distinct from t
+    and not exists (select from schema_to_drop to_d where to_d.schema = d.schema)
+),
+-- domain_to_drop as (
+--     select *
+--     from domain_target t
+--     where not exists (select from domain_desired d where (t.schema, t.name) = (d.schema, d.name))
+--     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+-- ),
 table_target (schema, rel) as (
     select nspname, relname
     from shadow.pg_class c
@@ -117,8 +160,6 @@ attr_target (schema, rel, attname, type, not_null, expr, attgenerated, attidenti
         attidentity
     end
     from shadow.pg_attribute_fdw a
-    join shadow.pg_type_fdw t on (a.atttypid = t.oid)
-    -- join shadow.pg_namespace tn on (tn.oid = t.typnamespace)
     left join shadow.pg_attrdef_fdw ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
     join shadow.pg_class c on (c.oid = a.attrelid)
     join schema_target s on (s.oid = c.relnamespace)
@@ -134,8 +175,6 @@ attr_desired (schema, rel, attname, type, not_null, expr, attgenerated, attident
         attgenerated,
         attidentity
     from pg_catalog.pg_attribute a
-    -- join pg_catalog.pg_type t on (a.atttypid = t.oid)
-    -- join pg_catalog.pg_namespace tn on (tn.oid = t.typnamespace)
     left join pg_catalog.pg_attrdef ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
     join pg_catalog.pg_class c on (c.oid = a.attrelid)
     join schema_desired s on (s.oid = c.relnamespace)
@@ -148,7 +187,7 @@ attr_to_add as (
     from attr_desired d
     where not exists (select from attr_target t where (d.schema, d.rel, d.attname) = (t.schema, t.rel, t.attname))
 ),
-attr_diff as (
+attr_to_alter as (
     select d, t
     from attr_desired d
     full outer join attr_target t using (schema, rel, attname)
@@ -212,8 +251,13 @@ select format('drop table %I.%I;', schema, rel)
 from table_to_drop
 union all
 select format('alter table %I.%I drop column %I;', (t).schema, (t).rel, (t).attname)
-from attr_diff
+from attr_to_alter
 where (d).attname is null
+union all
+select format('drop domain %I.%I;', (t).schema, (t).name)
+from domain_diff
+where (d).def <> (t).def
+or d is not distinct from null
 union all
 select format('drop type %I.%I;', schema, name)
 from type_to_drop
@@ -238,6 +282,11 @@ select format('create type %I.%I as %s;', schema, name::text, case typtype
     else ''
 end)
 from type_to_add t
+union all
+select format('create domain %I.%I as %s', (d).schema, (d).name, (d).def)
+from domain_diff
+where (d).def <> (t).def
+or t is not distinct from null
 union all
 select format('create table %I.%I ();', schema, rel)
 from table_to_add
@@ -269,7 +318,7 @@ select format('alter table %I.%I add column %I %s%s%s;',
 from attr_to_add
 union all
 select format('alter table %I.%I alter column %I %s;', (d).schema, (d).rel, (d).attname, action)
-from attr_diff,
+from attr_to_alter,
 lateral (values
     (
         format('type %s', (d).type), -- @TODO using <expression>
@@ -312,7 +361,7 @@ lateral (values
         (d).not_null <> (t).not_null and not (d).not_null
     )
 ) _ (action, applies)
-where d is not null
+where d is distinct from null
 and applies
 union all
 select format('%s;', def)

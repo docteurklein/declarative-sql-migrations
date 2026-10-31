@@ -3,7 +3,8 @@ create schema fdw_friendly_catalog;
 
 create view fdw_friendly_catalog.pg_attribute_fdw as
 select attrelid, attname, atttypid, attlen, attnum, atttypmod, attndims, attbyval, attalign, attstorage, attcompression, attnotnull, atthasdef, atthasmissing, attidentity, 
-attgenerated, attisdropped, attislocal, attinhcount, attcollation, attstattarget, attacl , attoptions, attfdwoptions
+attgenerated, attisdropped, attislocal, attinhcount, attcollation, attstattarget, attacl , attoptions, attfdwoptions,
+format_type(atttypid, atttypmod) collate "C" formatted_type
 from pg_catalog.pg_attribute;
 
 create view fdw_friendly_catalog.pg_attrdef_fdw as

@@ -8,6 +8,8 @@ set local search_path to test;
 create type ty1 as (id int);
 create type en1 as enum ('ok', 'notok');
 
+create domain d1 as varchar(12) check (trim(value) <> ' ');
+
 create table test1 (
     test1_id int not null primary key,
     en en1,
