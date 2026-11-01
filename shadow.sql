@@ -2,9 +2,9 @@
 
 create extension if not exists postgres_fdw;
 
-create server if not exists :target foreign data wrapper postgres_fdw options (dbname :'target');
+create server if not exists :"target" foreign data wrapper postgres_fdw options (:target);
 
-create user mapping if not exists for current_user server :target;
+create user mapping if not exists for current_user server :"target" options (:creds);
 
 drop schema if exists shadow cascade;
 create schema shadow;
@@ -20,11 +20,11 @@ import foreign schema pg_catalog except (
     pg_stats,
     pg_stats_ext_exprs
 )
-from server :target
+from server :"target"
 into shadow;
 
 import foreign schema fdw_friendly_catalog -- alternatives to excluded above
-from server :target
+from server :"target"
 into shadow;
 
 create function shadow.debug(a anyelement) returns anyelement
@@ -37,17 +37,23 @@ begin
 end
 $$;
 
-drop view if exists shadow.alter_ddl cascade;
-create or replace view shadow.alter_ddl (ddl) as
-with schema_target (oid, nspname) as (
+-- drop view if exists shadow.alter_ddl cascade;
+-- create or replace view shadow.alter_ddl (ddl) as
+drop function if exists shadow.alter_ddl;
+create or replace function shadow.alter_ddl(exclude_schemas text[] default '{}', if_exists text default ' if exists', cascade text default ' cascade')
+returns setof text
+language sql
+volatile parallel safe
+begin atomic
+with recursive schema_target (oid, nspname) as (
     select oid, nspname
     from shadow.pg_namespace
-    where nspname not in ('pg_catalog', 'pg_toast', 'pg_temp', 'fdw_friendly_catalog', 'shadow', 'information_schema')
+    where not nspname = any(array['pg_catalog', 'pg_toast', 'pg_temp', 'fdw_friendly_catalog', 'shadow', 'information_schema'] || exclude_schemas)
 ),
 schema_desired (oid, nspname) as (
     select oid, nspname
     from pg_catalog.pg_namespace
-    where nspname not in ('pg_catalog', 'pg_toast', 'pg_temp', 'fdw_friendly_catalog', 'shadow', 'information_schema')
+    where not nspname = any(array['pg_catalog', 'pg_toast', 'pg_temp', 'fdw_friendly_catalog', 'shadow', 'information_schema'] || exclude_schemas)
 ),
 schema_to_add (schema) as (
     select nspname
@@ -121,7 +127,7 @@ domain_diff as (
     from domain_desired d
     natural full outer join domain_target t
     where d is distinct from t
-    and not exists (select from schema_to_drop to_d where to_d.schema = d.schema)
+    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 ),
 table_target (schema, rel) as (
     select nspname, relname
@@ -187,8 +193,8 @@ attr_to_alter as (
     from attr_desired d
     full outer join attr_target t using (schema, rel, attname)
     where d is distinct from t
-    and not exists (select from schema_to_drop to_d where to_d.schema = d.schema)
-    and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (d.schema, d.rel))
+    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
 ),
 index_target (schema, rel, index, def) as (
     select nspname, rel.relname, ic.relname, pg_get_indexdef(ic.oid)
@@ -239,56 +245,98 @@ constraint_diff as (
     from constraint_desired d
     full outer join constraint_target t using (schema, rel, name)
     where d is distinct from t
-    and not exists (select from schema_to_drop to_d where to_d.schema = d.schema)
-    and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (d.schema, d.rel))
+    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
     order by case (d).type when 'p' then 1 when 'u' then 2 end nulls last
 ),
-view_target (schema, rel, def) as (
-    select schemaname, viewname, definition
+view_target (schema, oid, rel, def) as (
+    select schemaname, oid, viewname, definition
     from shadow.pg_views v
     join schema_target s on (s.nspname = v.schemaname)
 ),
-view_desired (schema, rel, def) as (
-    select schemaname, viewname, definition
+view_desired (schema, oid, rel, def) as (
+    select schemaname, oid, viewname, definition
     from pg_catalog.pg_views v
     join schema_desired s on (s.nspname = v.schemaname)
 ),
 view_to_add as (
-    select *
+    select d.*, 0 sort
     from view_desired d
-    where not exists (select from view_target t where (d.schema, d.rel) = (t.schema, t.rel))
+    full outer join view_target t using (schema, rel)
+    where t.rel is null or d.def <> t.def
+    -- where not exists (select from view_target t where (d.schema, d.rel) = (t.schema, t.rel))
 ),
 view_to_drop as (
-    select *
+    select *, 0 sort
     from view_target t
     where not exists (select from view_desired d where (d.schema, d.rel) = (t.schema, t.rel))
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    -- union all
+    -- select dep.*, sort + 1
+    -- from view_to_add v
+    -- join shadow.pg_depend on (refobjid = v.oid)
+    -- join view_desired dep on (dep.oid = objid)
+),
+routine_target (schema, name, def, args) as (
+    select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
+    from shadow.pg_proc p
+    join schema_target s on (s.oid = p.pronamespace)
+),
+routine_desired (schema, name, def, args) as (
+    select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
+    from pg_catalog.pg_proc p
+    join schema_desired s on (s.oid = p.pronamespace)
+),
+routine_to_add as (
+    select d.*
+    from routine_desired d
+    where not exists (select from routine_target t where (d.schema, d.name) = (t.schema, t.name))
+),
+routine_to_drop as (
+    select *
+    from routine_target t
+    where not exists (select from routine_desired d where (d.schema, d.name) = (t.schema, t.name))
+    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 )
-select format('drop schema %I cascade;', schema)
+select format('drop schema%s %I%s;', if_exists, schema, cascade)
 from schema_to_drop
+
+union all (
+    select format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
+    from view_to_drop
+    order by sort desc
+)
+
 union all
-select format('drop view if exists %I.%I cascade;', schema, rel)
-from view_to_drop
+select format('drop routine%s %I.%I (%s)%s;', if_exists, schema, name, args, cascade)
+from routine_to_drop
+
 union all
-select format('drop index if exists %I.%I;', schema, rel)
+select format('drop index%s %I.%I%s;', if_exists, schema, rel, cascade)
 from index_to_drop
+
 union all
-select format('drop table %I.%I;', schema, rel)
+select format('drop table%s %I.%I%s;', if_exists, schema, rel, cascade)
 from table_to_drop
+
 union all
-select format('alter table %I.%I drop column %I;', (t).schema, (t).rel, (t).attname)
+select format('alter table %I.%I drop column%s %I;', (t).schema, (t).rel, if_exists, (t).attname)
 from attr_to_alter
 where (d).attname is null
+
 union all
-select format('drop domain %I.%I;', (t).schema, (t).name)
+select format('drop domain%s %I.%I%s;', if_exists, (t).schema, (t).name, cascade)
 from domain_diff
 where (d).name is null and (t).name is not null
+
 union all
-select format('drop type %I.%I;', schema, name)
+select format('drop type%s %I.%I%s;', if_exists, schema, name, cascade)
 from type_to_drop
+
 union all
 select format('create schema %I;', schema)
 from schema_to_add
+
 union all
 select format('create type %I.%I as %s;', schema, name::text, case typtype
     when 'e' then format('enum (%s)', array_to_string(array(
@@ -307,13 +355,16 @@ select format('create type %I.%I as %s;', schema, name::text, case typtype
     else ''
 end)
 from type_to_add t
+
 union all
 select format('create domain %I.%I as %s', (d).schema, (d).name, (d).def)
 from domain_diff
 where (d).name is not null
+
 union all
 select format('create table %I.%I ();', schema, rel)
 from table_to_add
+
 union all
 select format('alter table %I.%I add column %I %s%s%s;',
     schema,
@@ -340,6 +391,7 @@ select format('alter table %I.%I add column %I %s%s%s;',
     end
 )
 from attr_to_add
+
 union all
 select format('alter table %I.%I alter column %I %s;', (d).schema, (d).rel, (d).attname, action)
 from attr_to_alter,
@@ -387,25 +439,38 @@ lateral (values
 ) _ (action, applies)
 where d is distinct from null
 and applies
+
 union all
 select format('%s;', def)
 from index_to_add
+
 union all
 select format('alter table %I.%I add constraint %I %s;', (d).schema, (d).rel, (d).name, (d).def)
 from constraint_diff
 where (t).name is null
+
 union all
-select format('alter table %I.%I drop constraint %I;', (t).schema, (t).rel, (t).name)
+select format('alter table %I.%I drop constraint%s %I%s;', (t).schema, (t).rel, if_exists, (t).name, cascade)
 from constraint_diff
 where (d).name is null
+
 union all
 select format('alter table %I.%I alter constraint %I %s%s;', (d).schema, (d).rel, (d).name,
     case when (d).is_deferrable then 'deferrable' else 'not deferrable' end,
     case when (d).is_deferred then ' initially deferred' else ' initially immediate' end
 )
 from constraint_diff
-where d <> t -- is distinct from t and (d).name is not null and (t).name is not null
+where d <> t
+
+union all (
+    select format('create or replace view %I.%I as %s', schema, rel, def)
+    from view_to_add
+    order by sort asc
+)
+
 union all
-select format('create or replace view %I.%I as %s', schema, rel, def)
-from view_to_add
+select def
+from routine_to_add
+
 ;
+end;
