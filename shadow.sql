@@ -37,8 +37,6 @@ begin
 end
 $$;
 
--- drop view if exists shadow.alter_ddl cascade;
--- create or replace view shadow.alter_ddl (ddl) as
 drop function if exists shadow.alter_ddl;
 create or replace function shadow.alter_ddl(exclude_schemas text[] default '{}', if_exists text default ' if exists', cascade text default ' cascade')
 returns setof text
@@ -249,33 +247,70 @@ constraint_diff as (
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
     order by case (d).type when 'p' then 1 when 'u' then 2 end nulls last
 ),
-view_target (schema, oid, rel, def) as (
-    select schemaname, oid, viewname, definition
+view_target (schema, rel, def) as (
+    select schemaname, viewname, definition
     from shadow.pg_views v
     join schema_target s on (s.nspname = v.schemaname)
 ),
 view_desired (schema, oid, rel, def) as (
-    select schemaname, oid, viewname, definition
-    from pg_catalog.pg_views v
-    join schema_desired s on (s.nspname = v.schemaname)
+    select s.nspname, c.oid, c.relname, pg_get_viewdef(c.oid)
+    from pg_catalog.pg_class c
+    join schema_desired s on (s.oid = c.relnamespace)
+    and c.relkind in ('v')
 ),
 view_to_add as (
-    select d.*, 0 sort
+    select d.*
     from view_desired d
     full outer join view_target t using (schema, rel)
     where t.rel is null or d.def <> t.def
     -- where not exists (select from view_target t where (d.schema, d.rel) = (t.schema, t.rel))
 ),
+view_dep (f, t) as (
+    select o.oid, ref.oid
+    from pg_depend dep
+    join pg_rewrite r on (r.oid = dep.objid)
+    join pg_class o on (o.oid = r.ev_class)
+    join pg_class ref on (ref.oid = dep.refobjid)
+    join schema_desired s on (s.oid = o.relnamespace)
+    where r.ev_class <> refobjid
+    and dep.classid = 'pg_rewrite'::regclass
+    and dep.refclassid = 'pg_class'::regclass
+    and o.relkind in ('v')
+    and ref.relkind in ('v')
+),
+view_tree (f, t, priority) as (
+    select *, 0
+    from view_dep
+    union all
+    select d.*, priority + 1
+    from view_tree f
+    join view_dep d on (f.t = d.f)
+),
+view_dep_sort as (
+    select f, t, sum(priority) priority
+    from view_tree
+    group by 1, 2
+    order by 3 desc
+),
+view_sort as (
+    select v.*, null priority
+    from view_to_add v
+    where not exists (select from view_dep where f = oid or t = oid)
+    union 
+    select v.*, priority
+    from view_to_add v
+    join view_dep_sort on (oid = t)
+    union
+    select v.*, priority
+    from view_to_add v
+    join view_dep_sort on (oid = f)
+    order by priority desc nulls first
+),
 view_to_drop as (
-    select *, 0 sort
+    select *
     from view_target t
     where not exists (select from view_desired d where (d.schema, d.rel) = (t.schema, t.rel))
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
-    -- union all
-    -- select dep.*, sort + 1
-    -- from view_to_add v
-    -- join shadow.pg_depend on (refobjid = v.oid)
-    -- join view_desired dep on (dep.oid = objid)
 ),
 routine_target (schema, name, def, args) as (
     select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
@@ -301,11 +336,9 @@ routine_to_drop as (
 select format('drop schema%s %I%s;', if_exists, schema, cascade)
 from schema_to_drop
 
-union all (
-    select format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
-    from view_to_drop
-    order by sort desc
-)
+union all
+select format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
+from view_to_drop
 
 union all
 select format('drop routine%s %I.%I (%s)%s;', if_exists, schema, name, args, cascade)
@@ -464,8 +497,7 @@ where d <> t
 
 union all (
     select format('create or replace view %I.%I as %s', schema, rel, def)
-    from view_to_add
-    order by sort asc
+    from view_sort
 )
 
 union all

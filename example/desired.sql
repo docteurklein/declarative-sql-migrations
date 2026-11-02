@@ -24,13 +24,28 @@ create table test2 (
     test1_id int not null references test1 (test1_id) deferrable initially deferred
 );
 
--- create view v1 as
--- select 0::bigint a, 'b', 3 c  -- rank() over () a
--- from test1;
+create view v1 as
+select 0::bigint a, 'b', 3 c  -- rank() over () a
+from test1;
 
--- create view v2 as
--- select sum(a)
--- from v1;
+create view v2 as
+select sum(a)
+from v1;
+
+create view alone as
+select 1;
+
+create view v3 as
+select sum(1)
+from v2;
+
+create view v4 as
+select sum(1)
+from v2;
+
+create view v5 as
+select sum(1)
+from v3;
 
 create function test2(a int) returns int
 begin atomic select 1; end;
