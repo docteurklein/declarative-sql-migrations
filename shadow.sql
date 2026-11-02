@@ -194,6 +194,24 @@ attr_to_alter as (
     and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
 ),
+rls_target as (
+    select p.*
+    from shadow.pg_policies p
+    join schema_target s on (s.nspname = p.schemaname)
+),
+rls_desired as (
+    select p.*
+    from pg_catalog.pg_policies p
+    join schema_desired s on (s.nspname = p.schemaname)
+),
+rls_diff as (
+    select d, t
+    from rls_desired d
+    full outer join rls_target t using (schemaname, tablename, policyname)
+    where d is distinct from t
+    and not exists (select from schema_to_drop to_d where to_d.schema = t.schemaname)
+    and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schemaname, t.tablename))
+),
 index_target (schema, rel, index, def) as (
     select nspname, rel.relname, ic.relname, pg_get_indexdef(ic.oid)
     from shadow.pg_index i
@@ -495,14 +513,30 @@ select format('alter table %I.%I alter constraint %I %s%s;', (d).schema, (d).rel
 from constraint_diff
 where d <> t
 
+union all
+select format('%s;', def)
+from routine_to_add
+
 union all (
     select format('create or replace view %I.%I as %s', schema, rel, def)
     from view_sort
 )
 
 union all
-select def
-from routine_to_add
+select format('drop policy %I on %I.%I;', (t).policyname, (t).schemaname, (t).tablename)
+from rls_diff
+where (t).policyname is not null
 
+union all
+select format('create policy %I on %I.%I as %s for %s to %s %s %s;',
+    (d).policyname, (d).schemaname, (d).tablename,
+    (d).permissive,
+    (d).cmd,
+    concat_ws(', ', variadic (d).roles),
+    case when (d).qual is not null then format('using %s', (d).qual) else '' end,
+    case when (d).with_check is not null then format('with check %s', (d).with_check) else '' end
+)
+from rls_diff r
+where (d).policyname is not null
 ;
 end;

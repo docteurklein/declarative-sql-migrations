@@ -50,4 +50,10 @@ from v3;
 create function test2(a int) returns int
 begin atomic select 1; end;
 
+
+create policy "recent" on test1
+as restrictive
+for select to anon
+using (gen > 4);
+
 commit;
