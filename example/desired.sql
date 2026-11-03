@@ -13,9 +13,9 @@ create domain d1 as varchar(16) check (trim(value) <> '  ');
 create table test1 (
     test1_id int not null primary key,
     en en1,
-    name text unique not null check (trim(name) <> '') default 1,
-    price int not null check (price > 0),
-    gen int generated always as (1+1) virtual
+    name text unique not null,--, check (trim(name) <> '') default 1,
+    price int not null,-- check (price > 0),
+    gen int generated always as (1+2 ) virtual
 );
 create index test1_name on test1 (name);
 
@@ -53,7 +53,8 @@ begin atomic select 1; end;
 
 create policy "recent" on test1
 as restrictive
-for select to anon
-using (gen > 4);
+for all to anon
+using (gen > 4)
+with check (true);
 
 commit;

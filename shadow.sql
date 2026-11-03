@@ -247,14 +247,14 @@ constraint_target (schema, rel, name, def, type, is_deferrable, is_deferred) as 
     from shadow.pg_constraint_fdw c
     join shadow.pg_class rel on (rel.oid = c.conrelid)
     join schema_target s on (s.oid = c.connamespace)
-    where contype not in ('c', 'n')
+    where contype not in ('n')
 ),
 constraint_desired (schema, rel, name, def, type, is_deferrable, is_deferred) as (
     select nspname, relname, c.conname, pg_get_constraintdef(c.oid) collate "C", contype, condeferrable, condeferred
     from pg_catalog.pg_constraint c
     join pg_catalog.pg_class rel on (rel.oid = c.conrelid)
     join schema_desired s on (s.oid = c.connamespace)
-    where contype not in ('c', 'n')
+    where contype not in ('n')
 ),
 constraint_diff as (
     select d, t
@@ -460,7 +460,7 @@ lateral (values
         (d).expr <> (t).expr and (d).expr = '' and (d).attgenerated = ''
     ),
     (
-        format('set expression as %s', (d).expr),
+        format('set expression as (%s)', (d).expr),
         (d).expr <> (t).expr and (d).expr <> '' and (d).attgenerated <> ''
     ),
     (
@@ -496,14 +496,14 @@ select format('%s;', def)
 from index_to_add
 
 union all
-select format('alter table %I.%I add constraint %I %s;', (d).schema, (d).rel, (d).name, (d).def)
-from constraint_diff
-where (t).name is null
+select format('alter table %I.%I drop constraint%s %I%s;', (t).schema, (t).rel, if_exists, (t).name, cascade)
+from constraint_diff r
+where (t).name is not null
 
 union all
-select format('alter table %I.%I drop constraint%s %I%s;', (t).schema, (t).rel, if_exists, (t).name, cascade)
+select format('alter table %I.%I add constraint %I %s;', (d).schema, (d).rel, (d).name, (d).def)
 from constraint_diff
-where (d).name is null
+where (d).name is not null
 
 union all
 select format('alter table %I.%I alter constraint %I %s%s;', (d).schema, (d).rel, (d).name,
@@ -511,7 +511,8 @@ select format('alter table %I.%I alter constraint %I %s%s;', (d).schema, (d).rel
     case when (d).is_deferred then ' initially deferred' else ' initially immediate' end
 )
 from constraint_diff
-where d <> t
+where (d).is_deferrable <> (t).is_deferrable
+or (d).is_deferred <> (t).is_deferred
 
 union all
 select format('%s;', def)
@@ -523,18 +524,18 @@ union all (
 )
 
 union all
-select format('drop policy %I on %I.%I;', (t).policyname, (t).schemaname, (t).tablename)
+select format('drop policy%s %I on %I.%I%s;', if_exists, (t).policyname, (t).schemaname, (t).tablename, cascade)
 from rls_diff
 where (t).policyname is not null
 
 union all
-select format('create policy %I on %I.%I as %s for %s to %s %s %s;',
+select format('create policy %I on %I.%I as %s for %s to %s%s%s;',
     (d).policyname, (d).schemaname, (d).tablename,
     (d).permissive,
     (d).cmd,
     concat_ws(', ', variadic (d).roles),
-    case when (d).qual is not null then format('using %s', (d).qual) else '' end,
-    case when (d).with_check is not null then format('with check %s', (d).with_check) else '' end
+    case when (d).qual is not null then format(' using (%s)', (d).qual) end,
+    case when (d).with_check is not null then format(' with check (%s)', (d).with_check) end
 )
 from rls_diff r
 where (d).policyname is not null
