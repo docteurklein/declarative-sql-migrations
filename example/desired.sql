@@ -3,6 +3,8 @@ begin;
 drop schema if exists test cascade;
 create schema test;
 
+create extension if not exists btree_gist schema public;
+
 set local search_path to test;
 
 create type ty1 as (id int);
@@ -10,14 +12,23 @@ create type en1 as enum ('ok', 'notok');
 
 create domain d1 as varchar(16) check (trim(value) <> '  ');
 
+
 create table test1 (
     test1_id int not null primary key,
     en en1,
     name text unique not null,--, check (trim(name) <> '') default 1,
     price int not null,-- check (price > 0),
-    gen int generated always as (1+2 ) virtual
+    at tstzrange,
+    gen int generated always as (1+2) virtual,
+    exclude using gist (
+        at WITH &&
+    ) where (price > 0)
 );
 create index test1_name on test1 (name);
+
+-- alter table test1 add constraint excl exclude using gist (at with &&) where (price > 0);
+-- alter table test1 add constraint excl exclude using gi;
+
 
 create table test2 (
     test2_id int not null primary key,
