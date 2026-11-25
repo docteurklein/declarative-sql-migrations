@@ -78,47 +78,6 @@ where current is distinct from shadow
 ;
 end;
 
-drop function if exists shadow.privilege_diff cascade;
-create or replace function shadow.privilege_diff()
-returns table (
-    schema text, privilege text, type text, "on" text, "to" text, drop bool
-)
-begin atomic
-with shadow as (
-    select nspname, privilege_type, 'table', c.relname, r.rolname
-    from shadow.pg_class c
-    left join shadow.pg_attribute_fdw a on a.attrelid = c.oid
-    join shadow.pg_namespace s on (s.oid = c.relnamespace)
-    , aclexplode(coalesce(
-        c.relacl,
-        acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
-    )) acl
-    join shadow.pg_authid r on r.oid = acl.grantee
-    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and c.relkind in ('r', 'p', 'v', 'm', 'S')
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
-),
-current as (
-    select nspname, privilege_type, 'table', c.relname, r.rolname
-    from pg_catalog.pg_class c
-    left join pg_catalog.pg_attribute a on a.attrelid = c.oid
-    join pg_catalog.pg_namespace s on (s.oid = c.relnamespace)
-    , aclexplode(coalesce(
-        c.relacl,
-        acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
-    )) acl
-    join pg_catalog.pg_authid r on r.oid = acl.grantee
-    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and c.relkind in ('r', 'p', 'v', 'm', 'S')
-    and not exists (select from shadow.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
-)
-select *, current is null
-from shadow
-natural full outer join current
-where current is distinct from shadow
-;
-end;
-
 drop function if exists shadow.type_diff cascade;
 create or replace function shadow.type_diff()
 returns table (
@@ -646,6 +605,56 @@ union all
 select nspname, null::oid, relname, def, true, null::int, false
 from view_to_drop
 order by 5 desc, 6 nulls first
+;
+end;
+
+drop function if exists shadow.privilege_diff cascade;
+create or replace function shadow.privilege_diff()
+returns table (
+    schema text, privilege text, type text, "on" text, "to" text, drop bool
+)
+begin atomic
+-- Unchanged privileges on a view that will be dropped and recreated still have
+-- to be granted: dropping the view throws away its ACL.
+with shadow (nspname, privilege_type, objtype, relname, rolname) as (
+    select nspname, privilege_type, 'table', c.relname, r.rolname
+    from shadow.pg_class c
+    join shadow.pg_namespace s on (s.oid = c.relnamespace)
+    , aclexplode(coalesce(
+        c.relacl,
+        acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
+    )) acl
+    join shadow.pg_authid r on r.oid = acl.grantee
+    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
+    and c.relkind in ('r', 'p', 'v', 'm', 'S')
+    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
+),
+current (nspname, privilege_type, objtype, relname, rolname) as (
+    select nspname, privilege_type, 'table', c.relname, r.rolname
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace s on (s.oid = c.relnamespace)
+    , aclexplode(coalesce(
+        c.relacl,
+        acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
+    )) acl
+    join pg_catalog.pg_authid r on r.oid = acl.grantee
+    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
+    and c.relkind in ('r', 'p', 'v', 'm', 'S')
+    and not exists (select from shadow.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
+),
+diff as (
+    select *, current is null as is_drop, current as current_row, shadow as shadow_row
+    from shadow
+    natural full outer join current
+)
+select nspname, privilege_type, objtype, relname, rolname, is_drop
+from diff
+where current_row is distinct from shadow_row
+or (current_row is not null and exists (
+    select from shadow.view_diff() v
+    where v.drop_first and not v.drop
+    and (v.schema, v.rel) = (nspname, relname)
+))
 ;
 end;
 
