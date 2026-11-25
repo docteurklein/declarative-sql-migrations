@@ -2,9 +2,9 @@
 
 create extension if not exists postgres_fdw;
 
-create server if not exists :"shadow" foreign data wrapper postgres_fdw options (:shadow);
+create server if not exists :"target" foreign data wrapper postgres_fdw options (:target);
 
-create user mapping if not exists for current_user server :"shadow" options (:creds);
+create user mapping if not exists for current_user server :"target" options (:creds);
 
 drop schema if exists shadow cascade;
 create schema shadow;
@@ -20,11 +20,11 @@ import foreign schema pg_catalog except (
     pg_stats,
     pg_stats_ext_exprs
 )
-from server :"shadow"
+from server :"target"
 into shadow;
 
 import foreign schema fdw_friendly_catalog -- alternatives to excluded above
-from server :"shadow"
+from server :"target"
 into shadow;
 
 create function shadow.debug(a anyelement) returns anyelement
@@ -37,79 +37,129 @@ begin
 end
 $$;
 
-drop function if exists shadow.alter_ddl;
-create or replace function shadow.alter_ddl(exclude_schemas text[] default '{}', if_exists text default ' if exists', cascade text default ' cascade')
-returns setof text
-language sql
-volatile parallel safe
+create table shadow.excluded_schema (
+    nspname text primary key
+);
+insert into shadow.excluded_schema values
+    ('pg_catalog'), ('pg_toast'), ('pg_temp'), ('fdw_friendly_catalog'), ('shadow'), ('information_schema')
+;
+
+create or replace function shadow.schema_diff()
+returns table (
+    nspname text, drop bool
+)
 begin atomic
-with recursive schema_shadow (oid, nspname) as (
-    select oid, nspname
-    from shadow.pg_namespace
-    where not nspname = any(array['pg_catalog', 'pg_toast', 'pg_temp', 'fdw_friendly_catalog', 'shadow', 'information_schema'] || exclude_schemas)
-),
-schema_current (oid, nspname) as (
-    select oid, nspname
-    from pg_catalog.pg_namespace
-    where not nspname = any(array['pg_catalog', 'pg_toast', 'pg_temp', 'fdw_friendly_catalog', 'shadow', 'information_schema'] || exclude_schemas)
-),
-schema_to_add (schema) as (
+with shadow as (
     select nspname
-    from schema_current d
-    where not exists (select from schema_shadow t where t.nspname = d.nspname)
+    from shadow.pg_namespace n
+    where not exists (select from shadow.excluded_schema e where e.nspname = n.nspname)
 ),
-schema_to_drop (schema) as (
+current as (
     select nspname
-    from schema_shadow t
-    where not exists (select from schema_current d where d.nspname = t.nspname)
-),
-grant_shadow (schema, privilege, type, "on", cols, "to") as (
-    select nspname, privilege_type, 'table', r.rolname, array_agg(a.attname), c.relname
+    from pg_catalog.pg_namespace n
+    where not exists (select from shadow.excluded_schema e where e.nspname = n.nspname)
+)
+select *, current is null
+from shadow
+natural full outer join current
+where current is distinct from shadow
+;
+end;
+
+drop function if exists shadow.privilege_diff cascade;
+create or replace function shadow.privilege_diff()
+returns table (
+    schema text, privilege text, type text, "on" text, "to" text, drop bool
+)
+begin atomic
+with shadow as (
+    select nspname, privilege_type, 'table', c.relname, r.rolname
     from shadow.pg_class c
     left join shadow.pg_attribute_fdw a on a.attrelid = c.oid
-    join schema_shadow s on (s.oid = c.relnamespace)
+    join shadow.pg_namespace s on (s.oid = c.relnamespace)
     , aclexplode(coalesce(
         c.relacl,
         acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
     )) acl
     join shadow.pg_authid r on r.oid = acl.grantee
-    where c.relkind in ('r', 'p', 'v', 'm', 'S')
-    group by 1, 2, 4, 6
+    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
+    and c.relkind in ('r', 'p', 'v', 'm', 'S')
 ),
-grant_current (schema, privilege, type, "on", cols, "to") as (
-    select nspname, privilege_type, 'table', r.rolname, array_agg(a.attname), c.relname
+current as (
+    select nspname, privilege_type, 'table', c.relname, r.rolname
     from pg_catalog.pg_class c
     left join pg_catalog.pg_attribute a on a.attrelid = c.oid
-    join schema_current s on (s.oid = c.relnamespace)
+    join pg_catalog.pg_namespace s on (s.oid = c.relnamespace)
     , aclexplode(coalesce(
         c.relacl,
         acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
     )) acl
     join pg_catalog.pg_authid r on r.oid = acl.grantee
-    where c.relkind in ('r', 'p', 'v', 'm', 'S')
-    group by 1, 2, 4, 6
-),
-grant_diff as (
-    select d, t
-    from grant_current d
-    natural full outer join grant_shadow t
-    where d is distinct from t
-),
-type_shadow (schema, name, def, typtype, typrelid) as (
-    select nspname, typname, formatted_type, typtype, typrelid
+    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
+    and c.relkind in ('r', 'p', 'v', 'm', 'S')
+)
+select *, current is null
+from shadow
+natural full outer join current
+where current is distinct from shadow
+;
+end;
+
+drop function if exists shadow.type_diff cascade;
+create or replace function shadow.type_diff()
+returns table (
+    schema text, oid text, name text, def text, typtype text, typrelid oid, drop bool
+)
+begin atomic
+with shadow as (
+    select nspname, t.oid, typname, format_type, typtype, typrelid
     from shadow.pg_type_fdw t
-    join schema_shadow s on (s.oid = t.typnamespace)
+    join shadow.pg_namespace s on (s.oid = t.typnamespace)
     left join shadow.pg_class c on typrelid = c.oid
     where typtype in ('c', 'e')
     and (relkind = 'c' or relkind is null)
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
+),
+current as (
+    select nspname, t.oid, typname, format_type(t.oid, typtypmod), typtype, typrelid
+    from pg_catalog.pg_type t
+    join pg_catalog.pg_namespace s on (s.oid = typnamespace)
+    left join pg_catalog.pg_class c on typrelid = c.oid
+    where typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
+    and (relkind = 'c' or relkind is null)
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
+)
+select *, current is null
+from shadow
+natural full outer join current
+where current is distinct from shadow
+;
+end;
+
+drop function if exists shadow.alter_ddl;
+create or replace function shadow.alter_ddl(if_exists text default ' if exists', cascade text default ' cascade')
+returns setof text
+language sql
+volatile parallel safe
+begin atomic
+with recursive
+type_shadow (schema, name, def, typtype, typrelid) as (
+    select nspname, typname, format_type, typtype, typrelid
+    from shadow.pg_type_fdw t
+    join shadow.pg_namespace s on (s.oid = t.typnamespace)
+    left join shadow.pg_class c on typrelid = c.oid
+    where typtype in ('c', 'e')
+    and (relkind = 'c' or relkind is null)
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 type_current (schema, oid, name, def, typtype, typrelid) as (
     select nspname, t.oid, typname, format_type(t.oid, typtypmod), typtype, typrelid
     from pg_catalog.pg_type t
-    join schema_current s on (s.oid = typnamespace)
+    join pg_namespace s on (s.oid = typnamespace)
     left join pg_catalog.pg_class c on typrelid = c.oid
     where typtype in ('c', 'e') -- see https://www.postgresql.org/docs/current/catalog-pg-type.html#id-1.10.4.64.4
     and (relkind = 'c' or relkind is null)
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 type_to_add as (
     select *
@@ -120,7 +170,7 @@ type_to_drop as (
     select *
     from type_shadow t
     where not exists (select from type_current d where (t.schema, t.name) = (d.schema, d.name))
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    and not exists (select from shadow.schema_diff() to_d where to_d.nspname = t.schema and to_d.drop)
 ),
 domain_shadow (schema, name, def) as (
     select nspname, t.typname, format('%s%s;', format_type(bt.oid, t.typtypmod), case when c.oid is not null
@@ -131,11 +181,12 @@ domain_shadow (schema, name, def) as (
         else ''
     end)
     from shadow.pg_type_fdw t
-    join schema_shadow s on (s.oid = t.typnamespace)
+    join shadow.pg_namespace s on (s.oid = t.typnamespace)
     left join shadow.pg_constraint_fdw c
         on t.oid = c.contypid
     join shadow.pg_type_fdw bt on t.typbasetype = bt.oid
     where t.typtype in ('d')
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 domain_current (schema, name, def) as (
     select nspname, t.typname, format('%s%s;', format_type(bt.oid, t.typtypmod), case when c.oid is not null
@@ -146,30 +197,33 @@ domain_current (schema, name, def) as (
         else ''
     end)
     from pg_catalog.pg_type t
-    join schema_current s on (s.oid = t.typnamespace)
+    join pg_namespace s on (s.oid = t.typnamespace)
     left join pg_catalog.pg_constraint c
         on t.oid = c.contypid
     join pg_catalog.pg_type bt on t.typbasetype = bt.oid
     where t.typtype in ('d')
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 domain_diff as (
     select d, t
     from domain_current d
     natural full outer join domain_shadow t
     where d is distinct from t
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    -- and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 ),
 table_shadow (schema, rel) as (
     select nspname, relname
     from shadow.pg_class c
-    join schema_shadow s on (s.oid = c.relnamespace)
+    join shadow.pg_namespace s on (s.oid = c.relnamespace)
     and relkind in ('r')
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 table_current (schema, rel) as (
     select nspname, relname
     from pg_catalog.pg_class c
-    join schema_current s on (s.oid = c.relnamespace)
+    join pg_namespace s on (s.oid = c.relnamespace)
     and relkind in ('r')
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 table_to_add (schema, rel) as (
     select d.schema, d.rel
@@ -180,11 +234,11 @@ table_to_drop (schema, rel) as (
     select schema, rel
     from table_shadow t
     where not exists (select from table_current d where (d.schema, d.rel) = (t.schema, t.rel))
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    -- and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 ),
 attr_shadow (schema, rel, attname, type, not_null, expr, attgenerated, attidentity) as (
     select s.nspname, relname, attname,
-        formatted_type,
+        format_type,
         attnotnull,
         expr,
         attgenerated,
@@ -193,10 +247,11 @@ attr_shadow (schema, rel, attname, type, not_null, expr, attgenerated, attidenti
     from shadow.pg_attribute_fdw a
     left join shadow.pg_attrdef_fdw ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
     join shadow.pg_class c on (c.oid = a.attrelid)
-    join schema_shadow s on (s.oid = c.relnamespace)
+    join shadow.pg_namespace s on (s.oid = c.relnamespace)
     and relkind in ('r')
     and attnum >= 1
     and not attisdropped
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 attr_current (schema, rel, attname, type, not_null, expr, attgenerated, attidentity) as (
     select s.nspname, relname, attname,
@@ -208,10 +263,11 @@ attr_current (schema, rel, attname, type, not_null, expr, attgenerated, attident
     from pg_catalog.pg_attribute a
     left join pg_catalog.pg_attrdef ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
     join pg_catalog.pg_class c on (c.oid = a.attrelid)
-    join schema_current s on (s.oid = c.relnamespace)
+    join pg_namespace s on (s.oid = c.relnamespace)
     and relkind in ('r')
     and attnum >= 1
     and not attisdropped
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 attr_to_add as (
     select *
@@ -223,25 +279,27 @@ attr_to_alter as (
     from attr_current d
     full outer join attr_shadow t using (schema, rel, attname)
     where d is distinct from t
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    -- and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
 ),
 rls_shadow as (
     select p.*
     from shadow.pg_policies p
-    join schema_shadow s on (s.nspname = p.schemaname)
+    join shadow.pg_namespace s on (s.nspname = p.schemaname)
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 rls_current as (
     select p.*
     from pg_catalog.pg_policies p
-    join schema_current s on (s.nspname = p.schemaname)
+    join pg_namespace s on (s.nspname = p.schemaname)
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 rls_diff as (
     select d, t
     from rls_current d
     full outer join rls_shadow t using (schemaname, tablename, policyname)
     where d is distinct from t
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schemaname)
+    -- and not exists (select from schema_to_drop to_d where to_d.schema = t.schemaname)
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schemaname, t.tablename))
 ),
 index_shadow (schema, rel, index, def) as (
@@ -249,18 +307,20 @@ index_shadow (schema, rel, index, def) as (
     from shadow.pg_index i
     join shadow.pg_class rel on (rel.oid = i.indrelid)
     join shadow.pg_class ic on (ic.oid = i.indexrelid)
-    join schema_shadow s on (s.oid = ic.relnamespace)
+    join shadow.pg_namespace s on (s.oid = ic.relnamespace)
     where not indisprimary -- covered by constraint
     and not indisunique
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 index_current (schema, rel, index, def) as (
     select nspname, rel.relname, ic.relname, pg_get_indexdef(ic.oid)
     from pg_catalog.pg_index i
     join pg_class rel on (rel.oid = i.indrelid)
     join pg_class ic on (ic.oid = i.indexrelid)
-    join schema_current s on (s.oid = ic.relnamespace)
+    join pg_namespace s on (s.oid = ic.relnamespace)
     where not indisprimary -- covered by constraint
     and not indisunique
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 index_to_add as (
     select *
@@ -271,41 +331,45 @@ index_to_drop as (
     select *
     from index_shadow t
     where not exists (select from index_current d where (d.schema, d.rel) = (t.schema, t.rel))
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    -- and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
 ),
 constraint_shadow (schema, rel, name, def, type, is_deferrable, is_deferred) as (
     select nspname, relname, c.conname, pg_get_constraintdef, contype, condeferrable, condeferred
     from shadow.pg_constraint_fdw c
     join shadow.pg_class rel on (rel.oid = c.conrelid)
-    join schema_shadow s on (s.oid = c.connamespace)
+    join shadow.pg_namespace s on (s.oid = c.connamespace)
     where contype not in ('n')
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 constraint_current (schema, rel, name, def, type, is_deferrable, is_deferred) as (
     select nspname, relname, c.conname, pg_get_constraintdef(c.oid) collate "C", contype, condeferrable, condeferred
     from pg_catalog.pg_constraint c
     join pg_catalog.pg_class rel on (rel.oid = c.conrelid)
-    join schema_current s on (s.oid = c.connamespace)
+    join pg_namespace s on (s.oid = c.connamespace)
     where contype not in ('n')
+    and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 constraint_diff as (
     select d, t
     from constraint_current d
     full outer join constraint_shadow t using (schema, rel, name)
     where d is distinct from t
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    -- and not exists (select from shadow.schema_diff(excluded_schemas) to_d where to_d.nspname = t.schema)
     and not exists (select from table_to_drop to_d where (to_d.schema, to_d.rel) = (t.schema, t.rel))
     order by case (d).type when 'p' then 1 when 'u' then 2 end nulls last
 ),
 view_shadow (schema, rel, def) as (
     select schemaname, viewname, definition
     from shadow.pg_views v
-    join schema_shadow s on (s.nspname = v.schemaname)
+    join shadow.pg_namespace s on (s.nspname = v.schemaname)
+    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
 ),
 view_current (schema, oid, rel, def) as (
     select s.nspname, c.oid, c.relname, pg_get_viewdef(c.oid)
     from pg_catalog.pg_class c
-    join schema_current s on (s.oid = c.relnamespace)
+    join pg_namespace s on (s.oid = c.relnamespace)
+    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
     and c.relkind in ('v')
 ),
 view_to_add as (
@@ -321,7 +385,7 @@ view_dep (f, t) as (
     join pg_rewrite r on (r.oid = dep.objid)
     join pg_class o on (o.oid = r.ev_class)
     join pg_class ref on (ref.oid = dep.refobjid)
-    join schema_current s on (s.oid = o.relnamespace)
+    join pg_namespace s on (s.oid = o.relnamespace)
     where r.ev_class <> refobjid
     and dep.classid = 'pg_rewrite'::regclass
     and dep.refclassid = 'pg_class'::regclass
@@ -360,17 +424,21 @@ view_to_drop as (
     select *
     from view_shadow t
     where not exists (select from view_current d where (d.schema, d.rel) = (t.schema, t.rel))
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    -- and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
 ),
 routine_shadow (schema, name, def, args) as (
     select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
     from shadow.pg_proc p
-    join schema_shadow s on (s.oid = p.pronamespace)
+    join shadow.pg_namespace s on (s.oid = p.pronamespace)
+    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
+    and prokind <> 'a'
 ),
 routine_current (schema, name, def, args) as (
     select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
     from pg_catalog.pg_proc p
-    join schema_current s on (s.oid = p.pronamespace)
+    join pg_namespace s on (s.oid = p.pronamespace)
+    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
+    and prokind <> 'a'
 ),
 routine_to_add as (
     select d.*
@@ -381,10 +449,11 @@ routine_to_drop as (
     select *
     from routine_shadow t
     where not exists (select from routine_current d where (d.schema, d.name) = (t.schema, t.name))
-    and not exists (select from schema_to_drop to_d where to_d.schema = t.schema)
+    and not exists (select from shadow.schema_diff() to_d where to_d.nspname = t.schema and to_d.drop)
 )
-select format('drop schema%s %I%s;', if_exists, schema, cascade)
-from schema_to_drop
+select format('drop schema%s %I%s;', if_exists, nspname, cascade)
+from shadow.schema_diff()
+where drop
 
 union all
 select format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
@@ -417,8 +486,9 @@ select format('drop type%s %I.%I%s;', if_exists, schema, name, cascade)
 from type_to_drop
 
 union all
-select format('create schema %I;', schema)
-from schema_to_add
+select format('create schema %I;', nspname)
+from shadow.schema_diff()
+where not drop
 
 union all
 select format('create type %I.%I as %s;', schema, name::text, case typtype
@@ -573,13 +643,13 @@ from rls_diff r
 where (d).policyname is not null
 
 union all
-select format('revoke %s on %s %I.%I from %s;', (d).privilege, (d).type, (d).schema, (d)."on", (d)."to")
-from grant_diff
-where (d).privilege is not null
+select format('revoke %s on %s %I.%I from %s;', privilege, type, schema, "on", "to")
+from shadow.privilege_diff()
+where drop
 
 union all
-select format('grant %s on %s %I.%I to %s;', (t).privilege, (t).type, (t).schema, (t)."on", (t)."to")
-from grant_diff
-where (t).privilege is not null
+select format('grant %s on %s %I.%I to %s;', privilege, type, schema, "on", "to")
+from shadow.privilege_diff()
+where not drop
 ;
 end;

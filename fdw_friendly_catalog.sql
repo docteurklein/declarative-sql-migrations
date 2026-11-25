@@ -4,7 +4,7 @@ create schema fdw_friendly_catalog;
 create view fdw_friendly_catalog.pg_attribute_fdw as
 select attrelid, attname, atttypid, attlen, attnum, atttypmod, attndims, attbyval, attalign, attstorage, attcompression, attnotnull, atthasdef, atthasmissing, attidentity, 
 attgenerated, attisdropped, attislocal, attinhcount, attcollation, attstattarget, attacl , attoptions, attfdwoptions,
-format_type(atttypid, atttypmod) collate "C" formatted_type
+format_type(atttypid, atttypmod) collate "C"
 from pg_catalog.pg_attribute;
 
 create view fdw_friendly_catalog.pg_attrdef_fdw as
@@ -13,7 +13,7 @@ from pg_catalog.pg_attrdef;
 
 
 create view fdw_friendly_catalog.pg_type_fdw as
-select *, format_type(oid, typtypmod) collate "C" formatted_type
+select *, format_type(oid, typtypmod) collate "C"
 from pg_catalog.pg_type;
 
 create view fdw_friendly_catalog.pg_constraint_fdw as
