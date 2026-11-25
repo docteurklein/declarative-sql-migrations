@@ -515,9 +515,12 @@ end;
 drop function if exists shadow.view_diff cascade;
 create or replace function shadow.view_diff()
 returns table (
-    schema text, oid oid, rel text, def text, drop bool, priority int
+    schema text, oid oid, rel text, def text, drop bool, priority int, drop_first bool
 )
 begin atomic
+-- drop_first marks views that depend on a table with column changes. PostgreSQL
+-- refuses to change such a column while a view's _RETURN rule uses it, so the
+-- view must be dropped before the table is altered and recreated afterwards.
 with recursive
 view_shadow (nspname, relname, def) as (
     select schemaname, viewname, definition
@@ -535,62 +538,114 @@ view_current (nspname, oid, relname, def) as (
     and c.relkind in ('v')
     and not exists (select from shadow.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
 ),
+-- every pg_class referenced by a view's _RETURN rule (tables and views)
+view_ref (view_oid, ref_oid) as (
+    select o.oid, dep.refobjid
+    from pg_depend dep
+    join pg_rewrite r on (r.oid = dep.objid)
+    join pg_class o on (o.oid = r.ev_class)
+    where r.ev_class <> dep.refobjid
+    and dep.classid = 'pg_rewrite'::regclass
+    and dep.refclassid = 'pg_class'::regclass
+    and o.relkind = 'v'
+),
+view_dep (f, t) as (
+    select view_oid, ref_oid
+    from view_ref
+    where exists (select from pg_class c where c.oid = ref_oid and c.relkind = 'v')
+),
+-- create or replace view cannot rename or retype existing output columns, but
+-- it can append new ones; only a prefix mismatch requires an actual drop
+view_cols_shadow (nspname, relname, cols) as (
+    select n.nspname, c.relname,
+           array_agg(a.attname::text || ':' || a.format_type order by a.attnum)
+    from shadow.pg_class c
+    join shadow.pg_namespace n on (n.oid = c.relnamespace)
+    join shadow.pg_attribute_fdw a on (a.attrelid = c.oid)
+    where c.relkind = 'v' and a.attnum > 0 and not a.attisdropped
+    and not exists (select from shadow.excluded_schema e where e.nspname = n.nspname)
+    group by n.nspname, c.relname
+),
+view_cols_current (nspname, relname, cols) as (
+    select n.nspname, c.relname,
+           array_agg(a.attname::text || ':' || pg_catalog.format_type(a.atttypid, a.atttypmod) order by a.attnum)
+    from pg_class c
+    join pg_namespace n on (n.oid = c.relnamespace)
+    join pg_attribute a on (a.attrelid = c.oid)
+    where c.relkind = 'v' and a.attnum > 0 and not a.attisdropped
+    and not exists (select from shadow.excluded_schema e where e.nspname = n.nspname)
+    group by n.nspname, c.relname
+),
+view_cols_changed (nspname, relname) as (
+    select d.nspname, d.relname
+    from view_cols_current d
+    join view_cols_shadow s using (nspname, relname)
+    where d.cols[1:cardinality(s.cols)] collate "C" <> s.cols collate "C"
+),
+changed_tables (nspname, relname) as (
+    select distinct schema, rel
+    from shadow.column_diff()
+),
+affected_direct (oid) as (
+    select distinct r.view_oid
+    from view_ref r
+    join pg_class c on (c.oid = r.ref_oid)
+    join pg_namespace n on (n.oid = c.relnamespace)
+    join changed_tables t on (t.nspname, t.relname) = (n.nspname, c.relname)
+    where c.relkind in ('r', 'p')
+    union
+    select d.oid
+    from view_current d
+    join view_cols_changed c using (nspname, relname)
+),
+-- views directly on changed tables plus everything stacked on top of them
+affected (oid) as (
+    select oid from affected_direct
+    union
+    select d.f
+    from view_dep d
+    join affected a on (d.t = a.oid)
+),
+-- priority is the number of views stacked on a view: base views first when
+-- creating, dependents first when dropping
+view_depth (oid, depth) as (
+    select oid, 0 from view_current
+    union
+    select d.f, depth + 1
+    from view_depth v
+    join view_dep d on (d.t = v.oid)
+),
+view_priority (oid, priority) as (
+    select oid, max(depth) from view_depth group by oid
+),
 view_to_add as (
     select d.*
     from view_current d
     full outer join view_shadow t using (nspname, relname)
     where t.relname is null or d.def <> t.def
 ),
+view_to_recreate as (
+    select d.*
+    from view_current d
+    where exists (select from view_to_add a where a.oid = d.oid)
+    or exists (select from affected a where a.oid = d.oid)
+),
 view_to_drop as (
     select *
     from view_shadow t
     where not exists (select from view_current d where (d.nspname, d.relname) = (t.nspname, t.relname))
-),
-view_dep (f, t) as (
-    select o.oid, ref.oid
-    from pg_depend dep
-    join pg_rewrite r on (r.oid = dep.objid)
-    join pg_class o on (o.oid = r.ev_class)
-    join pg_class ref on (ref.oid = dep.refobjid)
-    join pg_namespace s on (s.oid = o.relnamespace)
-    where r.ev_class <> refobjid
-    and dep.classid = 'pg_rewrite'::regclass
-    and dep.refclassid = 'pg_class'::regclass
-    and o.relkind in ('v')
-    and ref.relkind in ('v')
-),
-view_tree (f, t, priority) as (
-    select *, 0
-    from view_dep
-    union all
-    select d.*, priority + 1
-    from view_tree f
-    join view_dep d on (f.t = d.f)
-),
-view_dep_sort as (
-    select f, t, sum(priority) priority
-    from view_tree
-    group by 1, 2
-),
-view_sort as (
-    select v.*, null::int priority
-    from view_to_add v
-    where not exists (select from view_dep where f = oid or t = oid)
-    union
-    select v.*, priority
-    from view_to_add v
-    join view_dep_sort on (oid = t)
-    union
-    select v.*, priority
-    from view_to_add v
-    join view_dep_sort on (oid = f)
 )
-select nspname, oid, relname, def, false, priority
-from view_sort
+select v.nspname, v.oid, v.relname, v.def, false, p.priority,
+       a.oid is not null and exists (
+           select from view_shadow s where (s.nspname, s.relname) = (v.nspname, v.relname)
+       )
+from view_to_recreate v
+left join view_priority p on (p.oid = v.oid)
+left join affected a on (a.oid = v.oid)
 union all
-select nspname, null::oid, relname, def, true, null::int
+select nspname, null::oid, relname, def, true, null::int, false
 from view_to_drop
-order by 5, 6 desc nulls first
+order by 5 desc, 6 nulls first
 ;
 end;
 
@@ -660,6 +715,12 @@ union all
 select format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
 from views
 where drop
+
+union all
+(select format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
+from views
+where drop_first
+order by priority desc nulls first)
 
 union all
 select format('drop routine%s %I.%I (%s)%s;', if_exists, schema, name, args, cascade)
@@ -833,7 +894,7 @@ union all
 (select format('create or replace view %I.%I as %s', schema, rel, def)
 from views
 where not drop
-order by priority desc nulls first)
+order by priority nulls first)
 
 union all
 select format('drop policy%s %I on %I.%I%s;', if_exists, policyname, schemaname, tablename, cascade)
