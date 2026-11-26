@@ -682,76 +682,62 @@ and not exists (
 
 drop function if exists shadow.alter_ddl;
 create or replace function shadow.alter_ddl(if_exists text default ' if exists', cascade text default ' cascade')
-returns setof text
+returns table (schema text, object text, ddl text)
 language sql
 volatile parallel safe
 begin atomic
--- Each diff is evaluated once here; without the CTEs it would be rescanned
--- once per branch below (and column/constraint diffs are used three times).
-with
-schemas as (select * from shadow.schema_diff),
-types as (select * from shadow.type_diff),
-domains as (select * from shadow.domain_diff),
-tables as (select * from shadow.table_diff),
-columns as (select * from shadow.column_diff),
-policies as (select * from shadow.policy_diff),
-indexes as (select * from shadow.index_diff),
-constraints as (select * from shadow.constraint_diff),
-views as (select * from shadow.view_diff),
-routines as (select * from shadow.routine_diff),
-privileges as (select * from shadow.privilege_diff)
-select format('drop schema%s %I%s;', if_exists, nspname, cascade)
-from schemas
+select nspname, null, format('drop schema%s %I%s;', if_exists, nspname, cascade)
+from shadow.schema_diff
 where drop
 
 union all
-select format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
-from views
+select schema, rel, format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
+from shadow.view_diff
 where drop
 
 union all
-(select format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
-from views
+(select schema, rel, format('drop view%s %I.%I%s;', if_exists, schema, rel, cascade)
+from shadow.view_diff
 where drop_first
 order by priority desc nulls first)
 
 union all
-select format('drop routine%s %I.%I (%s)%s;', if_exists, schema, name, args, cascade)
-from routines
+select schema, name, format('drop routine%s %I.%I (%s)%s;', if_exists, schema, name, args, cascade)
+from shadow.routine_diff
 where drop
 
 union all
-select format('drop index%s %I.%I%s;', if_exists, schema, index, cascade)
-from indexes
+select schema, index, format('drop index%s %I.%I%s;', if_exists, schema, index, cascade)
+from shadow.index_diff
 where drop
 
 union all
-select format('drop table%s %I.%I%s;', if_exists, schema, rel, cascade)
-from tables
+select schema, rel, format('drop table%s %I.%I%s;', if_exists, schema, rel, cascade)
+from shadow.table_diff
 where drop
 
 union all
-select format('alter table %I.%I drop column%s %I;', schema, rel, if_exists, attname)
-from columns
+select schema, rel, format('alter table %I.%I drop column%s %I;', schema, rel, if_exists, attname)
+from shadow.column_diff
 where drop
 
 union all
-select format('drop domain%s %I.%I%s;', if_exists, schema, name, cascade)
-from domains
+select schema, name, format('drop domain%s %I.%I%s;', if_exists, schema, name, cascade)
+from shadow.domain_diff
 where drop
 
 union all
-select format('drop type%s %I.%I%s;', if_exists, schema, name, cascade)
-from types
+select schema, name, format('drop type%s %I.%I%s;', if_exists, schema, name, cascade)
+from shadow.type_diff
 where drop
 
 union all
-select format('create schema %I;', nspname)
-from schemas
+select nspname, null, format('create schema %I;', nspname)
+from shadow.schema_diff
 where not drop
 
 union all
-select format('create type %I.%I as %s;', schema, name::text, case typtype
+select schema, name::text, format('create type %I.%I as %s;', schema, name::text, case typtype
     when 'e' then format('enum (%s)', array_to_string(array(
         select quote_literal(enumlabel)
         from pg_enum
@@ -767,21 +753,21 @@ select format('create type %I.%I as %s;', schema, name::text, case typtype
     ), ',  '))
     else ''
 end)
-from types t
+from shadow.type_diff t
 where not drop
 
 union all
-select format('create domain %I.%I as %s', schema, name, def)
-from domains
+select schema, name, format('create domain %I.%I as %s', schema, name, def)
+from shadow.domain_diff
 where not drop
 
 union all
-select format('create table %I.%I ();', schema, rel)
-from tables
+select schema, rel, format('create table %I.%I ();', schema, rel)
+from shadow.table_diff
 where not drop
 
 union all
-select format('alter table %I.%I add column %I %s%s%s;',
+select schema, format('%I.%I', rel, attname), format('alter table %I.%I add column %I %s%s%s;',
     schema,
     rel,
     attname,
@@ -802,12 +788,12 @@ select format('alter table %I.%I add column %I %s%s%s;',
         else ''
     end
 )
-from columns
+from shadow.column_diff
 where add
 
 union all
-select format('alter table %I.%I alter column %I %s;', schema, rel, attname, action)
-from columns,
+select schema, format('%I.%I', rel, attname), format('alter table %I.%I alter column %I %s;', schema, rel, attname, action)
+from shadow.column_diff,
 lateral (values
     (
         format('type %s', current_type),
@@ -853,49 +839,49 @@ lateral (values
 where not drop and not add and applies
 
 union all
-select format('%s;', def)
-from indexes
+select schema, rel, format('%s;', def)
+from shadow.index_diff
 where not drop
 
 union all
-select format('alter table %I.%I drop constraint%s %I%s;', schema, rel, if_exists, name, cascade)
-from constraints
+select schema, format('%I.%I', rel, name), format('alter table %I.%I drop constraint%s %I%s;', schema, rel, if_exists, name, cascade)
+from shadow.constraint_diff
 where not add
 
 union all
-(select format('alter table %I.%I add constraint %I %s;', schema, rel, name, current_def)
-from constraints
+(select schema, format('%I.%I', rel, name), format('alter table %I.%I add constraint %I %s;', schema, rel, name, current_def)
+from shadow.constraint_diff
 where not drop
 order by case current_type when 'p' then 1 when 'u' then 2 end nulls last)
 
 union all
-select format('alter table %I.%I alter constraint %I %s%s;', schema, rel, name,
+select  schema, format('%I.%I', rel, name), format('alter table %I.%I alter constraint %I %s%s;', schema, rel, name,
     case when current_is_deferrable then 'deferrable' else 'not deferrable' end,
     case when current_is_deferred then ' initially deferred' else ' initially immediate' end
 )
-from constraints
+from shadow.constraint_diff
 where not drop and not add
 and (current_is_deferrable <> shadow_is_deferrable
 or current_is_deferred <> shadow_is_deferred)
 
 union all
-select format('%s;', def)
-from routines
+select  schema, name, format('%s;', def)
+from shadow.routine_diff
 where add
 
 union all
-(select format('create or replace view %I.%I as %s', schema, rel, def)
-from views
+(select schema, rel, format('create or replace view %I.%I as %s', schema, rel, def)
+from shadow.view_diff
 where not drop
 order by priority nulls first)
 
 union all
-select format('drop policy%s %I on %I.%I%s;', if_exists, policyname, schemaname, tablename, cascade)
-from policies
+select schemaname, policyname, format('drop policy%s %I on %I.%I%s;', if_exists, policyname, schemaname, tablename, cascade)
+from shadow.policy_diff
 where drop
 
 union all
-select format('create policy %I on %I.%I as %s for %s to %s%s%s;',
+select schemaname, policyname, format('create policy %I on %I.%I as %s for %s to %s%s%s;',
     policyname, schemaname, tablename,
     current_permissive,
     current_cmd,
@@ -903,17 +889,17 @@ select format('create policy %I on %I.%I as %s for %s to %s%s%s;',
     case when current_qual is not null then format(' using (%s)', current_qual) end,
     case when current_with_check is not null then format(' with check (%s)', current_with_check) end
 )
-from policies
+from shadow.policy_diff
 where not drop
 
 union all
-select format('revoke %s on %s %I.%I from %s;', privilege, type, schema, "on", "to")
-from privileges
+select schema, null, format('revoke %s on %s %I.%I from %s;', privilege, type, schema, "on", "to")
+from shadow.privilege_diff
 where drop
 
 union all
-select format('grant %s on %s %I.%I to %s;', privilege, type, schema, "on", "to")
-from privileges
+select schema, null, format('grant %s on %s %I.%I to %s;', privilege, type, schema, "on", "to")
+from shadow.privilege_diff
 where not drop
 ;
 end;
