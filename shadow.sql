@@ -658,20 +658,23 @@ end;
 drop function if exists shadow.routine_diff cascade;
 create or replace function shadow.routine_diff()
 returns table (
-    schema text, name text, def text, args text, drop bool
+    schema text, name text, def text, args text, drop bool, add bool
 )
 begin atomic
--- pg_get_functiondef() cannot be evaluated on foreign pg_proc oids, so compare presence only.
-with shadow (nspname, proname, def, args) as (
-    select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
-    from shadow_catalog.pg_proc p
+-- Function definitions and identity arguments are generated on the target side
+-- via shadow_catalog.pg_proc_fdw; foreign pg_proc oids cannot be passed to
+-- pg_get_functiondef() locally. Dropping is only needed when the identity
+-- (args) or result type changes; otherwise CREATE OR REPLACE suffices.
+with shadow (nspname, proname, def, args, result, prokind) as (
+    select nspname, proname, p.pg_get_functiondef, p.args, p.result, p.prokind
+    from shadow_catalog.pg_proc_fdw p
     join shadow_catalog.pg_namespace s on (s.oid = p.pronamespace)
     where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
     and prokind <> 'a'
     and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_proc'::regclass and e.objid = p.oid)
 ),
-current (nspname, proname, def, args) as (
-    select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
+current (nspname, proname, def, args, result, prokind) as (
+    select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid), pg_get_function_result(p.oid), p.prokind
     from pg_catalog.pg_proc p
     join pg_catalog.pg_namespace s on (s.oid = p.pronamespace)
     where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
@@ -682,10 +685,20 @@ select coalesce(shadow.nspname, current.nspname),
        coalesce(shadow.proname, current.proname),
        coalesce(current.def, shadow.def),
        coalesce(current.args, shadow.args),
-       current is null
+       current is null or (
+           current is not null and shadow is not null
+           and current.result collate "C" <> shadow.result collate "C"
+       ),
+       shadow is null or (
+           current is not null and shadow is not null
+           and (current.def collate "C" <> shadow.def collate "C"
+                or current.result collate "C" <> shadow.result collate "C")
+       )
 from shadow
-full join current using (nspname, proname)
-where (current is null or shadow is null)
+full join current using (nspname, proname, args, prokind)
+where (current is null or shadow is null
+       or current.def collate "C" <> shadow.def collate "C"
+       or current.result collate "C" <> shadow.result collate "C")
 and not exists (
     select from shadow.schema_diff() to_d
     where to_d.drop and to_d.nspname = coalesce(shadow.nspname, current.nspname)
@@ -894,7 +907,7 @@ or current_is_deferred <> shadow_is_deferred)
 union all
 select format('%s;', def)
 from routines
-where not drop
+where add
 
 union all
 (select format('create or replace view %I.%I as %s', schema, rel, def)

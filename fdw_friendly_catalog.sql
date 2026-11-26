@@ -20,6 +20,13 @@ create view fdw_friendly_catalog.pg_constraint_fdw as
 select *, pg_get_constraintdef(oid) collate "C" pg_get_constraintdef
 from pg_catalog.pg_constraint;
 
+create view fdw_friendly_catalog.pg_proc_fdw as
+select *,
+       case when prokind <> 'a' then pg_get_functiondef(oid) end collate "C" pg_get_functiondef,
+       case when prokind <> 'a' then pg_get_function_identity_arguments(oid) end collate "C" args,
+       case when prokind <> 'a' then pg_get_function_result(oid) end collate "C" result
+from pg_catalog.pg_proc;
+
 create view fdw_friendly_catalog.extension_objects as
 select classid, objid
 from pg_catalog.pg_depend
