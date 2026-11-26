@@ -611,20 +611,15 @@ returns table (
     schema text, privilege text, type text, "on" text, "to" text, drop bool
 )
 begin atomic
+-- ACLs are expanded on the target side via shadow_catalog.pg_class_acl_fdw:
+-- aclitem text cannot be parsed locally when target roles do not exist here.
 -- Unchanged privileges on a view that will be dropped and recreated still have
 -- to be granted: dropping the view throws away its ACL.
 with shadow (nspname, privilege_type, objtype, relname, rolname) as (
-    select nspname, privilege_type, 'table', c.relname, r.rolname
-    from shadow_catalog.pg_class c
-    join shadow_catalog.pg_namespace s on (s.oid = c.relnamespace)
-    , aclexplode(coalesce(
-        c.relacl,
-        acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
-    )) acl
-    join shadow_catalog.pg_authid r on r.oid = acl.grantee
-    where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and c.relkind in ('r', 'p', 'v', 'm', 'S')
-    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
+    select nspname, privilege_type, 'table', relname, rolname
+    from shadow_catalog.pg_class_acl_fdw a
+    where not exists (select from shadow.excluded_schema e where e.nspname = a.nspname)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = a.oid)
 ),
 current (nspname, privilege_type, objtype, relname, rolname) as (
     select nspname, privilege_type, 'table', c.relname, r.rolname
@@ -632,7 +627,7 @@ current (nspname, privilege_type, objtype, relname, rolname) as (
     join pg_catalog.pg_namespace s on (s.oid = c.relnamespace)
     , aclexplode(coalesce(
         c.relacl,
-        acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
+        acldefault(case when c.relkind = 'S' then 'S'::"char" else 'r'::"char" end, c.relowner)
     )) acl
     join pg_catalog.pg_authid r on r.oid = acl.grantee
     where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)

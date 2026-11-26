@@ -27,6 +27,18 @@ select *,
        case when prokind <> 'a' then pg_get_function_result(oid) end collate "C" result
 from pg_catalog.pg_proc;
 
+create view fdw_friendly_catalog.pg_class_acl_fdw as
+select c.oid, n.nspname, c.relname, c.relkind,
+       acl.privilege_type, acl.is_grantable, grantee.rolname
+from pg_catalog.pg_class c
+join pg_catalog.pg_namespace n on (n.oid = c.relnamespace)
+, aclexplode(coalesce(
+    c.relacl,
+    acldefault(case when c.relkind = 'S' then 'S'::"char" else 'r'::"char" end, c.relowner)
+)) acl
+join pg_catalog.pg_authid grantee on (grantee.oid = acl.grantee)
+where c.relkind in ('r', 'p', 'v', 'm', 'S');
+
 create view fdw_friendly_catalog.extension_objects as
 select classid, objid
 from pg_catalog.pg_depend
