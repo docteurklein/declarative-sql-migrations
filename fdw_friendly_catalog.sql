@@ -19,3 +19,10 @@ from pg_catalog.pg_type;
 create view fdw_friendly_catalog.pg_constraint_fdw as
 select *, pg_get_constraintdef(oid) collate "C" pg_get_constraintdef
 from pg_catalog.pg_constraint;
+
+create view fdw_friendly_catalog.extension_objects as
+select classid, objid
+from pg_catalog.pg_depend
+where refclassid = 'pg_catalog.pg_extension'::regclass
+and deptype = 'e';
+

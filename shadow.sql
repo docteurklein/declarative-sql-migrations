@@ -3,7 +3,10 @@
 drop schema if exists shadow cascade;
 create schema shadow;
 
-create extension if not exists postgres_fdw;
+drop schema if exists shadow_catalog cascade;
+create schema shadow_catalog;
+
+create extension if not exists postgres_fdw schema public;
 create server if not exists :"target" foreign data wrapper postgres_fdw options (:target);
 create user mapping if not exists for current_user server :"target" options (:creds);
 
@@ -19,11 +22,11 @@ import foreign schema pg_catalog except (
     pg_stats_ext_exprs
 )
 from server :"target"
-into shadow;
+into shadow_catalog;
 
 import foreign schema fdw_friendly_catalog -- alternatives to excluded above
 from server :"target"
-into shadow;
+into shadow_catalog;
 
 create function shadow.debug(a anyelement) returns anyelement
 language plpgsql
@@ -39,18 +42,12 @@ create table shadow.excluded_schema (
     nspname text primary key
 );
 insert into shadow.excluded_schema values
-    ('pg_catalog'), ('pg_toast'), ('pg_temp'), ('fdw_friendly_catalog'), ('shadow'), ('information_schema')
+    ('pg_catalog'), ('pg_toast'), ('pg_temp'), ('fdw_friendly_catalog'), ('shadow'), ('shadow_catalog'), ('information_schema')
 ;
 
 create view shadow.extension_objects as
 select classid, objid
 from pg_catalog.pg_depend
-where refclassid = 'pg_catalog.pg_extension'::regclass
-and deptype = 'e';
-
-create view shadow.shadow_extension_objects as
-select classid, objid
-from shadow.pg_depend
 where refclassid = 'pg_catalog.pg_extension'::regclass
 and deptype = 'e';
 
@@ -61,9 +58,9 @@ returns table (
 begin atomic
 with shadow as (
     select nspname
-    from shadow.pg_namespace n
+    from shadow_catalog.pg_namespace n
     where not exists (select from shadow.excluded_schema e where e.nspname = n.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_namespace'::regclass and e.objid = n.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_namespace'::regclass and e.objid = n.oid)
 ),
 current as (
     select nspname
@@ -86,13 +83,13 @@ returns table (
 begin atomic
 with shadow as (
     select nspname, typname, format_type, typtype, typrelid
-    from shadow.pg_type_fdw t
-    join shadow.pg_namespace s on (s.oid = t.typnamespace)
-    left join shadow.pg_class c on typrelid = c.oid
+    from shadow_catalog.pg_type_fdw t
+    join shadow_catalog.pg_namespace s on (s.oid = t.typnamespace)
+    left join shadow_catalog.pg_class c on typrelid = c.oid
     where typtype in ('c', 'e')
     and (relkind = 'c' or relkind is null)
     and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_type'::regclass and e.objid = t.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_type'::regclass and e.objid = t.oid)
 ),
 current as (
     select nspname, t.oid, typname, format_type(t.oid, typtypmod), typtype, typrelid
@@ -138,14 +135,14 @@ with shadow (nspname, typname, def) as (
         )
         else ''
     end)
-    from shadow.pg_type_fdw t
-    join shadow.pg_namespace s on (s.oid = t.typnamespace)
-    left join shadow.pg_constraint_fdw c
+    from shadow_catalog.pg_type_fdw t
+    join shadow_catalog.pg_namespace s on (s.oid = t.typnamespace)
+    left join shadow_catalog.pg_constraint_fdw c
         on t.oid = c.contypid
-    join shadow.pg_type_fdw bt on t.typbasetype = bt.oid
+    join shadow_catalog.pg_type_fdw bt on t.typbasetype = bt.oid
     where t.typtype in ('d')
     and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_type'::regclass and e.objid = t.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_type'::regclass and e.objid = t.oid)
 ),
 current (nspname, typname, def) as (
     select nspname, t.typname, format('%s%s;', format_type(bt.oid, t.typtypmod), case when c.oid is not null
@@ -179,11 +176,11 @@ returns table (
 begin atomic
 with shadow (nspname, relname) as (
     select nspname, relname
-    from shadow.pg_class c
-    join shadow.pg_namespace s on (s.oid = c.relnamespace)
+    from shadow_catalog.pg_class c
+    join shadow_catalog.pg_namespace s on (s.oid = c.relnamespace)
     and relkind in ('r')
     and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
 ),
 current (nspname, relname) as (
     select nspname, relname
@@ -216,15 +213,15 @@ with shadow (nspname, relname, attname, type, not_null, expr, attgenerated, atti
         expr,
         attgenerated::text,
         attidentity::text
-    from shadow.pg_attribute_fdw a
-    left join shadow.pg_attrdef_fdw ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
-    join shadow.pg_class c on (c.oid = a.attrelid)
-    join shadow.pg_namespace s on (s.oid = c.relnamespace)
+    from shadow_catalog.pg_attribute_fdw a
+    left join shadow_catalog.pg_attrdef_fdw ad on (ad.adrelid = a.attrelid and ad.adnum = a.attnum)
+    join shadow_catalog.pg_class c on (c.oid = a.attrelid)
+    join shadow_catalog.pg_namespace s on (s.oid = c.relnamespace)
     and relkind in ('r')
     and attnum >= 1
     and not attisdropped
     and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = a.attrelid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = a.attrelid)
 ),
 current (nspname, relname, attname, type, not_null, expr, attgenerated, attidentity) as (
     select s.nspname, relname, attname,
@@ -287,11 +284,11 @@ returns table (
 begin atomic
 with shadow (schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check) as (
     select p.*
-    from shadow.pg_policies p
-    join shadow.pg_namespace s on (s.nspname = p.schemaname)
-    join shadow.pg_class c on (c.relnamespace = s.oid and c.relname = p.tablename)
+    from shadow_catalog.pg_policies p
+    join shadow_catalog.pg_namespace s on (s.nspname = p.schemaname)
+    join shadow_catalog.pg_class c on (c.relnamespace = s.oid and c.relname = p.tablename)
     and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
 ),
 current (schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check) as (
     select p.*
@@ -356,16 +353,16 @@ begin atomic
 -- pg_get_indexdef() cannot be evaluated on foreign pg_class oids, so compare table presence only.
 with shadow (nspname, relname, indexname, def) as (
     select nspname, rel.relname, ic.relname, pg_get_indexdef(ic.oid)
-    from shadow.pg_index i
-    join shadow.pg_class rel on (rel.oid = i.indrelid)
-    join shadow.pg_class ic on (ic.oid = i.indexrelid)
-    join shadow.pg_namespace s on (s.oid = ic.relnamespace)
+    from shadow_catalog.pg_index i
+    join shadow_catalog.pg_class rel on (rel.oid = i.indrelid)
+    join shadow_catalog.pg_class ic on (ic.oid = i.indexrelid)
+    join shadow_catalog.pg_namespace s on (s.oid = ic.relnamespace)
     where not indisprimary -- covered by constraint
     and not indisunique -- covered by constraint
     and not indisexclusion -- covered by exclusion constraint
     and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = rel.oid)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = ic.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = rel.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = ic.oid)
 ),
 current (nspname, relname, indexname, def) as (
     select nspname, rel.relname, ic.relname, pg_get_indexdef(ic.oid)
@@ -421,13 +418,13 @@ returns table (
 begin atomic
 with shadow (nspname, relname, conname, def, type, is_deferrable, is_deferred) as (
     select nspname, relname, c.conname, pg_get_constraintdef, contype::text, condeferrable, condeferred
-    from shadow.pg_constraint_fdw c
-    join shadow.pg_class rel on (rel.oid = c.conrelid)
-    join shadow.pg_namespace s on (s.oid = c.connamespace)
+    from shadow_catalog.pg_constraint_fdw c
+    join shadow_catalog.pg_class rel on (rel.oid = c.conrelid)
+    join shadow_catalog.pg_namespace s on (s.oid = c.connamespace)
     where contype not in ('n')
     and not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_constraint'::regclass and e.objid = c.oid)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = rel.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_constraint'::regclass and e.objid = c.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = rel.oid)
 ),
 current (nspname, relname, conname, def, type, is_deferrable, is_deferred) as (
     select nspname, relname, c.conname, pg_get_constraintdef(c.oid) collate "C", contype::text, condeferrable, condeferred
@@ -483,11 +480,11 @@ begin atomic
 with recursive
 view_shadow (nspname, relname, def) as (
     select schemaname, viewname, definition
-    from shadow.pg_views v
-    join shadow.pg_namespace s on (s.nspname = v.schemaname)
-    join shadow.pg_class vc on (vc.relnamespace = s.oid and vc.relname = v.viewname and vc.relkind = 'v')
+    from shadow_catalog.pg_views v
+    join shadow_catalog.pg_namespace s on (s.nspname = v.schemaname)
+    join shadow_catalog.pg_class vc on (vc.relnamespace = s.oid and vc.relname = v.viewname and vc.relkind = 'v')
     where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = vc.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = vc.oid)
 ),
 view_current (nspname, oid, relname, def) as (
     select s.nspname, c.oid, c.relname, pg_get_viewdef(c.oid)
@@ -518,9 +515,9 @@ view_dep (f, t) as (
 view_cols_shadow (nspname, relname, cols) as (
     select n.nspname, c.relname,
            array_agg(a.attname::text || ':' || a.format_type order by a.attnum)
-    from shadow.pg_class c
-    join shadow.pg_namespace n on (n.oid = c.relnamespace)
-    join shadow.pg_attribute_fdw a on (a.attrelid = c.oid)
+    from shadow_catalog.pg_class c
+    join shadow_catalog.pg_namespace n on (n.oid = c.relnamespace)
+    join shadow_catalog.pg_attribute_fdw a on (a.attrelid = c.oid)
     where c.relkind = 'v' and a.attnum > 0 and not a.attisdropped
     and not exists (select from shadow.excluded_schema e where e.nspname = n.nspname)
     group by n.nspname, c.relname
@@ -618,16 +615,16 @@ begin atomic
 -- to be granted: dropping the view throws away its ACL.
 with shadow (nspname, privilege_type, objtype, relname, rolname) as (
     select nspname, privilege_type, 'table', c.relname, r.rolname
-    from shadow.pg_class c
-    join shadow.pg_namespace s on (s.oid = c.relnamespace)
+    from shadow_catalog.pg_class c
+    join shadow_catalog.pg_namespace s on (s.oid = c.relnamespace)
     , aclexplode(coalesce(
         c.relacl,
         acldefault(case when c.relkind <> 'S' then 'r' end::"char", c.relowner)
     )) acl
-    join shadow.pg_authid r on r.oid = acl.grantee
+    join shadow_catalog.pg_authid r on r.oid = acl.grantee
     where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
     and c.relkind in ('r', 'p', 'v', 'm', 'S')
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_class'::regclass and e.objid = c.oid)
 ),
 current (nspname, privilege_type, objtype, relname, rolname) as (
     select nspname, privilege_type, 'table', c.relname, r.rolname
@@ -667,16 +664,16 @@ begin atomic
 -- pg_get_functiondef() cannot be evaluated on foreign pg_proc oids, so compare presence only.
 with shadow (nspname, proname, def, args) as (
     select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
-    from shadow.pg_proc p
-    join shadow.pg_namespace s on (s.oid = p.pronamespace)
+    from shadow_catalog.pg_proc p
+    join shadow_catalog.pg_namespace s on (s.oid = p.pronamespace)
     where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
     and prokind <> 'a'
-    and not exists (select from shadow.shadow_extension_objects e where e.classid = 'pg_catalog.pg_proc'::regclass and e.objid = p.oid)
+    and not exists (select from shadow_catalog.extension_objects e where e.classid = 'pg_catalog.pg_proc'::regclass and e.objid = p.oid)
 ),
 current (nspname, proname, def, args) as (
     select nspname, proname, pg_get_functiondef(p.oid), pg_get_function_identity_arguments(p.oid)
     from pg_catalog.pg_proc p
-    join pg_namespace s on (s.oid = p.pronamespace)
+    join pg_catalog.pg_namespace s on (s.oid = p.pronamespace)
     where not exists (select from shadow.excluded_schema e where e.nspname = s.nspname)
     and prokind <> 'a'
     and not exists (select from shadow.extension_objects e where e.classid = 'pg_catalog.pg_proc'::regclass and e.objid = p.oid)
