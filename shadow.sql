@@ -51,11 +51,11 @@ from pg_catalog.pg_depend
 where refclassid = 'pg_catalog.pg_extension'::regclass
 and deptype = 'e';
 
-create or replace function shadow.schema_diff()
-returns table (
-    nspname text, drop bool
+drop view if exists shadow.schema_diff cascade;
+create view shadow.schema_diff (
+    nspname, drop
 )
-begin atomic
+as
 with shadow as (
     select nspname
     from shadow_catalog.pg_namespace n
@@ -73,14 +73,12 @@ from shadow
 natural full outer join current
 where current is distinct from shadow
 ;
-end;
 
-drop function if exists shadow.type_diff cascade;
-create or replace function shadow.type_diff()
-returns table (
-    schema text, oid text, name text, def text, typtype text, typrelid oid, drop bool
+drop view if exists shadow.type_diff cascade;
+create view shadow.type_diff (
+    schema, oid, name, def, typtype, typrelid, drop
 )
-begin atomic
+as
 with shadow as (
     select nspname, typname, format_type, typtype, typrelid
     from shadow_catalog.pg_type_fdw t
@@ -112,21 +110,19 @@ from shadow
 full join current using (nspname, typname)
 where (current is null or shadow is null)
 and not exists (
-    select from shadow.schema_diff() to_d
+    select from shadow.schema_diff to_d
     where to_d.drop and to_d.nspname = coalesce(shadow.nspname, current.nspname)
 )
 ;
-end;
 
--- One diff function per component, following shadow.schema_diff():
+-- One diff view per component, following shadow.schema_diff:
 -- `shadow` is the target catalog, `current` is the desired one, and `drop` means "only in target".
 
-drop function if exists shadow.domain_diff cascade;
-create or replace function shadow.domain_diff()
-returns table (
-    schema text, name text, def text, drop bool
+drop view if exists shadow.domain_diff cascade;
+create view shadow.domain_diff (
+    schema, name, def, drop
 )
-begin atomic
+as
 with shadow (nspname, typname, def) as (
     select nspname, t.typname, format('%s%s;', format_type(bt.oid, t.typtypmod), case when c.oid is not null
         then format (' constraint %I %s',
@@ -166,14 +162,12 @@ from shadow
 natural full outer join current
 where current is distinct from shadow
 ;
-end;
 
-drop function if exists shadow.table_diff cascade;
-create or replace function shadow.table_diff()
-returns table (
-    schema text, rel text, drop bool
+drop view if exists shadow.table_diff cascade;
+create view shadow.table_diff (
+    schema, rel, drop
 )
-begin atomic
+as
 with shadow (nspname, relname) as (
     select nspname, relname
     from shadow_catalog.pg_class c
@@ -195,17 +189,15 @@ from shadow
 natural full outer join current
 where current is distinct from shadow
 ;
-end;
 
-drop function if exists shadow.column_diff cascade;
-create or replace function shadow.column_diff()
-returns table (
-    schema text, rel text, attname text,
-    current_type text, current_not_null bool, current_expr text, current_attgenerated text, current_attidentity text,
-    shadow_type text, shadow_not_null bool, shadow_expr text, shadow_attgenerated text, shadow_attidentity text,
-    drop bool, add bool
+drop view if exists shadow.column_diff cascade;
+create view shadow.column_diff (
+    schema, rel, attname,
+    current_type, current_not_null, current_expr, current_attgenerated, current_attidentity,
+    shadow_type, shadow_not_null, shadow_expr, shadow_attgenerated, shadow_attidentity,
+    drop, add
 )
-begin atomic
+as
 with shadow (nspname, relname, attname, type, not_null, expr, attgenerated, attidentity) as (
     select s.nspname, relname, attname,
         format_type,
@@ -266,22 +258,20 @@ select nspname, relname, attname,
        drop, add
 from diff d
 where not exists (
-    select from shadow.table_diff() to_d
+    select from shadow.table_diff to_d
     where to_d.drop
     and (to_d.schema, to_d.rel) = (d.nspname, d.relname)
 )
 ;
-end;
 
-drop function if exists shadow.policy_diff cascade;
-create or replace function shadow.policy_diff()
-returns table (
-    schemaname text, tablename text, policyname text,
-    current_permissive text, current_roles text[], current_cmd text, current_qual text, current_with_check text,
-    shadow_permissive text, shadow_roles text[], shadow_cmd text, shadow_qual text, shadow_with_check text,
-    drop bool, add bool
+drop view if exists shadow.policy_diff cascade;
+create view shadow.policy_diff (
+    schemaname, tablename, policyname,
+    current_permissive, current_roles, current_cmd, current_qual, current_with_check,
+    shadow_permissive, shadow_roles, shadow_cmd, shadow_qual, shadow_with_check,
+    drop, add
 )
-begin atomic
+as
 with shadow (schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check) as (
     select p.*
     from shadow_catalog.pg_policies p
@@ -322,7 +312,7 @@ filtered as (
     select *
     from diff d
     where not exists (
-        select from shadow.table_diff() to_d
+        select from shadow.table_diff to_d
         where to_d.drop
         and (to_d.schema, to_d.rel) = (d.schemaname, d.tablename)
     )
@@ -342,14 +332,12 @@ select schemaname, tablename, policyname,
 from filtered
 where not drop
 ;
-end;
 
-drop function if exists shadow.index_diff cascade;
-create or replace function shadow.index_diff()
-returns table (
-    schema text, rel text, index text, def text, drop bool
+drop view if exists shadow.index_diff cascade;
+create view shadow.index_diff (
+    schema, rel, index, def, drop
 )
-begin atomic
+as
 -- pg_get_indexdef() cannot be evaluated on foreign pg_class oids, so compare table presence only.
 with shadow (nspname, relname, indexname, def) as (
     select nspname, rel.relname, ic.relname, pg_get_indexdef(ic.oid)
@@ -389,7 +377,7 @@ diff as (
     natural full outer join current_tables
     where current_tables is distinct from shadow_tables
     and not exists (
-        select from shadow.table_diff() to_d
+        select from shadow.table_diff to_d
         where to_d.drop
         and (to_d.schema, to_d.rel) = (nspname, relname)
     )
@@ -405,17 +393,15 @@ from diff d
 join current c using (nspname, relname)
 where not d.drop
 ;
-end;
 
-drop function if exists shadow.constraint_diff cascade;
-create or replace function shadow.constraint_diff()
-returns table (
-    schema text, rel text, name text,
-    current_def text, current_type text, current_is_deferrable bool, current_is_deferred bool,
-    shadow_def text, shadow_type text, shadow_is_deferrable bool, shadow_is_deferred bool,
-    drop bool, add bool
+drop view if exists shadow.constraint_diff cascade;
+create view shadow.constraint_diff (
+    schema, rel, name,
+    current_def, current_type, current_is_deferrable, current_is_deferred,
+    shadow_def, shadow_type, shadow_is_deferrable, shadow_is_deferred,
+    drop, add
 )
-begin atomic
+as
 with shadow (nspname, relname, conname, def, type, is_deferrable, is_deferred) as (
     select nspname, relname, c.conname, pg_get_constraintdef, contype::text, condeferrable, condeferred
     from shadow_catalog.pg_constraint_fdw c
@@ -460,20 +446,18 @@ select nspname, relname, conname,
        drop, add
 from diff d
 where not exists (
-    select from shadow.table_diff() to_d
+    select from shadow.table_diff to_d
     where to_d.drop
     and (to_d.schema, to_d.rel) = (d.nspname, d.relname)
 )
 order by case current_type when 'p' then 1 when 'u' then 2 end nulls last
 ;
-end;
 
-drop function if exists shadow.view_diff cascade;
-create or replace function shadow.view_diff()
-returns table (
-    schema text, oid oid, rel text, def text, drop bool, priority int, drop_first bool
+drop view if exists shadow.view_diff cascade;
+create view shadow.view_diff (
+    schema, oid, rel, def, drop, priority, drop_first
 )
-begin atomic
+as
 -- drop_first marks views that depend on a table with column changes. PostgreSQL
 -- refuses to change such a column while a view's _RETURN rule uses it, so the
 -- view must be dropped before the table is altered and recreated afterwards.
@@ -540,7 +524,7 @@ view_cols_changed (nspname, relname) as (
 ),
 changed_tables (nspname, relname) as (
     select distinct schema, rel
-    from shadow.column_diff()
+    from shadow.column_diff
 ),
 affected_direct (oid) as (
     select distinct r.view_oid
@@ -603,14 +587,12 @@ select nspname, null::oid, relname, def, true, null::int, false
 from view_to_drop
 order by 5 desc, 6 nulls first
 ;
-end;
 
-drop function if exists shadow.privilege_diff cascade;
-create or replace function shadow.privilege_diff()
-returns table (
-    schema text, privilege text, type text, "on" text, "to" text, drop bool
+drop view if exists shadow.privilege_diff cascade;
+create view shadow.privilege_diff (
+    schema, privilege, type, "on", "to", drop
 )
-begin atomic
+as
 -- ACLs are expanded on the target side via shadow_catalog.pg_class_acl_fdw:
 -- aclitem text cannot be parsed locally when target roles do not exist here.
 -- Unchanged privileges on a view that will be dropped and recreated still have
@@ -643,19 +625,17 @@ select nspname, privilege_type, objtype, relname, rolname, is_drop
 from diff
 where current_row is distinct from shadow_row
 or (current_row is not null and exists (
-    select from shadow.view_diff() v
+    select from shadow.view_diff v
     where v.drop_first and not v.drop
     and (v.schema, v.rel) = (nspname, relname)
 ))
 ;
-end;
 
-drop function if exists shadow.routine_diff cascade;
-create or replace function shadow.routine_diff()
-returns table (
-    schema text, name text, def text, args text, drop bool, add bool
+drop view if exists shadow.routine_diff cascade;
+create view shadow.routine_diff (
+    schema, name, def, args, drop, add
 )
-begin atomic
+as
 -- Function definitions and identity arguments are generated on the target side
 -- via shadow_catalog.pg_proc_fdw; foreign pg_proc oids cannot be passed to
 -- pg_get_functiondef() locally. Dropping is only needed when the identity
@@ -695,11 +675,10 @@ where (current is null or shadow is null
        or current.def collate "C" <> shadow.def collate "C"
        or current.result collate "C" <> shadow.result collate "C")
 and not exists (
-    select from shadow.schema_diff() to_d
+    select from shadow.schema_diff to_d
     where to_d.drop and to_d.nspname = coalesce(shadow.nspname, current.nspname)
 )
 ;
-end;
 
 drop function if exists shadow.alter_ddl;
 create or replace function shadow.alter_ddl(if_exists text default ' if exists', cascade text default ' cascade')
@@ -710,17 +689,17 @@ begin atomic
 -- Each diff is evaluated once here; without the CTEs it would be rescanned
 -- once per branch below (and column/constraint diffs are used three times).
 with
-schemas as (select * from shadow.schema_diff()),
-types as (select * from shadow.type_diff()),
-domains as (select * from shadow.domain_diff()),
-tables as (select * from shadow.table_diff()),
-columns as (select * from shadow.column_diff()),
-policies as (select * from shadow.policy_diff()),
-indexes as (select * from shadow.index_diff()),
-constraints as (select * from shadow.constraint_diff()),
-views as (select * from shadow.view_diff()),
-routines as (select * from shadow.routine_diff()),
-privileges as (select * from shadow.privilege_diff())
+schemas as (select * from shadow.schema_diff),
+types as (select * from shadow.type_diff),
+domains as (select * from shadow.domain_diff),
+tables as (select * from shadow.table_diff),
+columns as (select * from shadow.column_diff),
+policies as (select * from shadow.policy_diff),
+indexes as (select * from shadow.index_diff),
+constraints as (select * from shadow.constraint_diff),
+views as (select * from shadow.view_diff),
+routines as (select * from shadow.routine_diff),
+privileges as (select * from shadow.privilege_diff)
 select format('drop schema%s %I%s;', if_exists, nspname, cascade)
 from schemas
 where drop
